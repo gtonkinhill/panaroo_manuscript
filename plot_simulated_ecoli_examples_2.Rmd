@@ -17,7 +17,7 @@ knitr::opts_chunk$set(fig.width=20, fig.height=12,
 options(stringsAsFactors = FALSE)
 ```
 
-##Load libraries
+##Load Libraries and Download Data
 
 ```{r, warning=FALSE, message=FALSE}
 library(ggplot2)
@@ -26,6 +26,14 @@ library(purrr)
 library(RColorBrewer)
 library(stringr)
 library(patchwork)
+library(piggyback)
+```
+
+```{r, eval=FALSE}
+pb_download("simulated_data.zip", 
+            repo = "gtonkinhill/panaroo_manuscript", 
+            dest = "./")
+unzip("simulated_data.zip")
 ```
 
 

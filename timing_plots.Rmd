@@ -17,7 +17,7 @@ knitr::opts_chunk$set(fig.width=20, fig.height=12,
 options(stringsAsFactors = FALSE)
 ```
 
-##Load libraries
+##Load Libraries and Download Data
 
 ```{r, warning=FALSE, message=FALSE}
 library(ggplot2)
@@ -27,6 +27,14 @@ library(purrr)
 library(RColorBrewer)
 library(stringr)
 library(patchwork)
+library(piggyback)
+```
+
+```{r, eval=FALSE}
+pb_download("timing_logs.zip", 
+            repo = "gtonkinhill/panaroo_manuscript", 
+            dest = "./")
+unzip("timing_logs.zip")
 ```
 
 ###Load data from log files

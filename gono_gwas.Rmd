@@ -17,12 +17,21 @@ knitr::opts_chunk$set(fig.width=20, fig.height=12,
 options(stringsAsFactors = FALSE)
 ```
 
-##Load libraries
+##Load Lsibraries and Download Data
 
 ```{r}
 library(data.table)
 library(ggplot2)
 library(knitr)
+library(purrr)
+library(piggyback)
+```
+
+```{r, eval=FALSE}
+pb_download("gono_harris_gwas.zip", 
+            repo = "gtonkinhill/panaroo_manuscript", 
+            dest = "./")
+unzip("gono_harris_gwas.zip")
 ```
 
 To demonstrate the use of Panaroo with Pyseer to preform association analyses between gene presence/absence, structural variations and phenotypes we investigated the *Neisseria gonorrhoeae* dataset of:
@@ -77,8 +86,8 @@ python ~/pyseer/scripts/count_patterns.py ./pyseer_out/gene_patterns_AZM.txt
 This results in:
 
 ```
-Patterns:       498
-Threshold:      1.00E-04
+Patterns:       529
+Threshold:      9.45E-05
 ```
 
 We can also run Pyseer on the presence/absence matrix of sructural variations output by Panaroo.
@@ -99,8 +108,8 @@ python ~/pyseer/scripts/count_patterns.py ./pyseer_out/struct_patterns_AZM.txt
 which gives
 
 ```
-Patterns:       1696
-Threshold:      2.95E-05
+Patterns:       3239
+Threshold:      1.54E-05
 ```
 
 We now have everything we need to start looking at some results!
@@ -118,7 +127,7 @@ gono_gwas <- gono_gwas[order(gono_gwas$`lrt-pvalue`),]
 gono_gwas <- gono_gwas[!grepl("bad-chisq", gono_gwas$notes),]
 
 # threshold form running count_patterns in pyseer
-sig_threshold <- 0.05/(498*length(antibiotics))
+sig_threshold <- 0.05/(529*length(antibiotics))
 
 sum(gono_gwas$`lrt-pvalue`<sig_threshold)
 sig_hits <- gono_gwas[gono_gwas$`lrt-pvalue`<sig_threshold,]
@@ -137,7 +146,7 @@ results[,c("variant", "lrt-pvalue", "beta", "beta-std-err","antibiotic", "Annota
 
 top_anno_gwas_hits <- results[results$Annotation!="hypothetical protein",c("variant", "lrt-pvalue", "beta", "beta-std-err", "antibiotic","Annotation")]
 
-write.csv(top_anno_gwas_hits, file="./gwases/gono_gwas_annotated.csv", quote = FALSE)
+write.csv(top_anno_gwas_hits, file="./gono_harris_gwas/gono_gwas_annotated.csv", quote = FALSE)
 ```
 
 now we can also look at possible rearrangements
@@ -153,16 +162,11 @@ gono_struct_was <- gono_struct_was[order(gono_struct_was$`lrt-pvalue`),]
 gono_struct_was <- gono_struct_was[!grepl("bad-chisq", gono_struct_was$notes),]
 
 # threshold form running count_patterns in pyseer
-sig_threshold <- 0.05/(1696*length(antibiotics))
+sig_threshold <- 0.05/(3239*length(antibiotics))
 
 sum(gono_struct_was$`lrt-pvalue`<sig_threshold)
 top_results <- gono_struct_was[gono_struct_was$`lrt-pvalue`<sig_threshold,]
 top_results <- top_results[!duplicated(top_results$variant),]
 
 write.csv(top_results, file="./gono_harris_gwas/gono_struct_was_annotated.csv", quote = FALSE)
-```
-
-
-```{r}
-
 ```

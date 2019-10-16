@@ -17,13 +17,21 @@ knitr::opts_chunk$set(fig.width=20, fig.height=12,
 options(stringsAsFactors = FALSE)
 ```
 
-##Load libraries
+##Load Libraries and Download Data
 
 ```{r, warning=FALSE, message=FALSE}
 library(ggplot2)
 library(data.table)
 library(purrr)
 library(RColorBrewer)
+library(piggyback)
+```
+
+```{r, eval=FALSE}
+pb_download("klebsiella_pa_files.zip", 
+            repo = "gtonkinhill/panaroo_manuscript", 
+            dest = "./")
+unzip("klebsiella_pa_files.zip")
 ```
 
 To investigate the ability of different methods to accurately infer the pangenome from real data we investigated a large Tuberculosis outbreak in London:
