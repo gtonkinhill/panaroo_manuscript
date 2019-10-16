@@ -1,0 +1,341 @@
+---
+title: "Simulated ecoli examples"
+author: "Gerry Tonkin-Hill"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Vignette Title}
+  %\VignetteEncoding{UTF-8}
+  %\VignetteEngine{knitr::rmarkdown}
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+Firs we run prokka on 6 diverse E. coli reference genomes 
+
+```
+cd ./simulated_data/realistic_ecoli/fasta_references
+
+for f in *.fasta
+do
+prefix=$(basename $f .fasta)
+nohup prokka --noanno --cpus 5 --outdir $prefix --prefix $prefix $f > nohup_${f}.log &
+done
+
+cd ..
+```
+
+Now to simulate some data starting with an E. coli reference genome annotated with Prokka. We simulate a pangenome using the Infinitely Many Genes (IMG) model along with some mutation on a subset of genes. We mutate codon rather than nucleotides so that stop codons are not introduced.
+
+```
+mkdir simulated_fasta
+mkdir simulated_fasta/sim_gr_1e-11_lr_1e-12_mu_1e-14
+
+python3 ~/panaroo/scripts/pseudo_full_pangenome.py -g ./fasta_references/GCF_000005845.2_ASM584v2_genomic/GCF_000005845.2_ASM584v2_genomic.gff --nisolates 100 --mutation_rate 1e-14 --gain_rate 1e-11 --loss_rate 1e-12 --pop_size 10e6 --n_sim_genes 2000 -o ./simulated_fasta/sim_gr_1e-11_lr_1e-12_mu_1e-14/
+
+```
+
+We can now run prokka on these simulated genomes. We use the GNU parallel software to speed things up here.
+
+```
+cd simulated_fasta/sim_gr_1e-11_lr_1e-12_mu_1e-14
+mkdir prokka_no_assem
+
+for fasta in *.fasta
+do
+prefix=$(basename $fasta .fasta)
+echo prokka --noanno --cpus 1 --outdir ./prokka_no_assem/${prefix} --prefix $prefix $fasta >> prokka_cmds.txt
+done
+
+parallel --progress -j 24 < prokka_cmds.txt
+```
+
+We can now run the pangenome analysis pipelines on the resulting annotations.
+  
+```
+cd prokka_no_assem
+
+# run panaroo
+mkdir panaroo_out
+python3 ~/panaroo/panaroo-runner.py -i ./*/*.gff -o panaroo_out/ -t 20 --verbose
+
+#run roary
+roary -f roary_out -p 20 ./*/*.gff
+
+cd ..
+```
+
+To generate more realistic input data we now simulate NGS Illumina reads using mason2 before using spades for assembly. We then run Prokka on the resulting assemblies. This gives a more accurate representation of the likely input data for tools such as Panaroo as errors introduced by assembly and annotation are often overlooked when assesing pangenome analysis software.
+
+We make use of the GNU parallel software to run a bash script which handles the pipeline of read simuation, assembly and annotation.
+
+```
+mkdir ngs_sim
+cd ngs_sim
+
+for fasta in ../*.fasta
+do
+prefix=$(basename $fasta .fasta)
+echo ~/panaroo/scripts/simulate_reads_assem_prok.sh $fasta 5000000 2 >> ngs_sim_cmds.txt
+done
+
+parallel --progress -j 20 < ngs_sim_cmds.txt
+
+```
+
+Again, we can now run the pangenome analysis pipelines on the resulting annotations.
+  
+```
+# run panaroo
+mkdir panaroo_out
+python3 ~/panaroo/panaroo-runner.py -i ./*/*/*.gff -o panaroo_out/ -t 20 --verbose
+
+#run roary
+roary -f roary_out -p 20 ./*/*/*.gff
+```
+
+```
+mkdir sim_gr_1e-11_lr_1e-12_mu_1e-14
+mv *sim_gr_1e-11_lr_1e-12_mu_1e-14* ./mkdir sim_gr_1e-11_lr_1e-12_mu_1e-14/
+```
+
+Some more parameter sets
+
+```
+mkdir simulated_fasta/sim_gr_1e-11_lr_1e-12_mu_1e-12
+
+nohup python3 ~/panaroo/scripts/pseudo_full_pangenome.py -g ./fasta_references/GCF_000005845.2_ASM584v2_genomic/GCF_000005845.2_ASM584v2_genomic.gff --nisolates 100 --mutation_rate 1e-12 --gain_rate 1e-11 --loss_rate 1e-12 --pop_size 10e6 --n_sim_genes 2000 -o ./simulated_fasta/sim_gr_1e-11_lr_1e-12_mu_1e-12/ > nohup_sim.log &
+
+
+mkdir simulated_fasta/sim_gr_1e-11_lr_1e-12_mu_1e-16
+
+python3 ~/panaroo/scripts/pseudo_full_pangenome.py -g ./fasta_references/GCF_000005845.2_ASM584v2_genomic/GCF_000005845.2_ASM584v2_genomic.gff --nisolates 100 --mutation_rate 1e-16 --gain_rate 1e-11 --loss_rate 1e-12 --pop_size 10e6 --n_sim_genes 2000 -o ./simulated_fasta/sim_gr_1e-11_lr_1e-12_mu_1e-16/
+
+```
+
+
+```
+for folder in sim_gr*
+do
+cd $folder
+
+rm prokka_cmds.txt
+
+mkdir prokka_no_assem
+
+for fasta in *.fasta
+do
+prefix=$(basename $fasta .fasta)
+echo prokka --proteins pan_sim_*prokka_DB.fasta --cpus 1 --outdir ./prokka_no_assem/${prefix} --prefix $prefix $fasta >> prokka_cmds.txt
+done
+
+parallel --progress -j 24 < prokka_cmds.txt
+
+cd ..
+
+done
+
+```
+
+```
+for folder in sim_gr*
+do
+cd $folder
+
+cd prokka_no_assem
+
+for f in ./*/*.gff
+do
+b=$(basename -s .gff $f)
+new="$(cut -d'o' -f2 <<<"$b")"
+echo $new
+sed -i "s/ID=/ID=${new}/g" $f
+done
+
+rm -r pan_sim*prokka_DB
+
+# run panaroo
+mkdir panaroo_out
+nohup python3 ~/panaroo/panaroo-runner.py -i ./*/*.gff -o panaroo_out/ -t 10 --verbose > nohup_panaroo.log &
+
+mkdir panaroo_no_consensus_rm_out
+nohup python3 ~/panaroo/panaroo-runner.py -i ./*/*.gff -o panaroo_no_consensus_rm_out/ -t 5 --remove_by_consensus False --verbose > nohup_rm_panaroo.log &
+
+
+#run roary
+
+nohup roary -f roary_out -p 10 ./*/*.gff > nohup_roary.log &
+
+cd ../..
+
+done
+```
+
+```
+mkdir pipeline_results
+
+for folder in sim_gr*
+do
+
+echo $folder
+
+cp ${folder}/pan_sim_gr*_presence_absence.csv ./pipeline_results/
+
+cp ${folder}/prokka_no_assem/roary_out/gene_presence_absence.csv "./pipeline_results/${folder}_prokka_no_assem_roary_pa.csv"
+cp ${folder}/prokka_no_assem/roary_out/gene_presence_absence.Rtab "./pipeline_results/${folder}_prokka_no_assem_roary_pa.Rtab"
+
+cp ${folder}/prokka_no_assem/panaroo_out/gene_presence_absence.csv "./pipeline_results/${folder}_prokka_no_assem_panaroo_pa.csv"
+cp ${folder}/prokka_no_assem/panaroo_out/gene_presence_absence.Rtab "./pipeline_results/${folder}_prokka_no_assem_panaroo_pa.Rtab"
+
+cp ${folder}/prokka_no_assem/panaroo_no_consensus_rm_out/gene_presence_absence.csv "./pipeline_results/${folder}_prokka_no_assem_norm_panaroo_pa.csv"
+cp ${folder}/prokka_no_assem/panaroo_no_consensus_rm_out/gene_presence_absence.Rtab "./pipeline_results/${folder}_prokka_no_assem_norm_panaroo_pa.Rtab"
+
+cut -d "," -f 1,2,3,4 ${folder}/prokka_no_assem/panaroo_out/gene_data.csv > "./pipeline_results/${folder}_prokka_no_assem_gene_data.csv"
+cut -d "," -f 1,2,3,4 ${folder}/prokka_no_assem/panaroo_no_consensus_rm_out/gene_data.csv > "./pipeline_results/${folder}_prokka_no_assem_norm_gene_data.csv"
+
+done
+```
+
+```{python}
+import glob
+
+with open("no_assem_mapping.csv", 'w') as outfile:
+    outfile.write("file,id,annotation\n")
+    for gfffile in glob.glob("./sim*/prokka_no_assem/*/*.gff"):
+        with open(gfffile, 'r') as infile:
+            for line in infile:
+                if line[0]=="#": continue
+                if "CDS" not in line: continue
+                if "##FASTA" in line: break
+                line = line.strip().split("\t")
+                annotations  = line[8]
+                ID = annotations.split(";")[0].split("=")[1]
+                if ".fasta" not in annotations:
+                    anno = "NA"
+                else:
+                    anno = annotations.split(";")[1].split(":")[-1]
+                file = gfffile.split("/")[-1].split(".")[0]
+                outfile.write(",".join([file, ID, anno]) + "\n")
+```
+
+```
+for folder in sim_gr*
+do
+cd $folder
+
+mkdir ngs_sim
+cd ngs_sim
+
+for fasta in ../*.fasta
+do
+prefix=$(basename $fasta .fasta)
+echo ~/panaroo/scripts/simulate_reads_assem_prok.sh $fasta 5000000 2 >> ngs_sim_cmds.txt
+done
+
+parallel --progress -j 20 < ngs_sim_cmds.txt
+
+cd ../..
+done
+```
+
+
+```
+for folder in sim_gr*
+do
+cd $folder
+
+rm prokka_assem_cmds.txt
+
+mkdir prokka_assem
+
+for fasta in ./ngs_sim/*/scaffolds.fasta
+do
+prefix="$(echo $fasta | awk -F'/' '{print $3}')"
+echo prokka --proteins pan_sim_*prokka_DB.fasta --cpus 1 --outdir ./prokka_assem/${prefix} --prefix $prefix $fasta >> prokka_assem_cmds.txt
+done
+
+parallel --progress -j 24 < prokka_assem_cmds.txt
+
+cd ..
+
+done
+
+```
+
+
+```
+for folder in sim_gr*
+do
+cd $folder
+
+cd prokka_assem
+
+rm -r pan_sim*prokka_DB
+
+# run panaroo
+mkdir panaroo_out
+nohup python3 ~/panaroo/panaroo-runner.py -i ./*/*.gff -o panaroo_out/ -t 5 --verbose > nohup_panaroo.log &
+
+#run roary
+
+nohup roary -f roary_out -p 5 ./*/*.gff > nohup_roary.log &
+
+cd ../..
+
+done
+```
+
+```
+for folder in sim_gr*[2-4]
+do
+
+echo $folder
+
+cp ${folder}/prokka_assem/roary_out/gene_presence_absence.csv "./pipeline_assem_results/${folder}_prokka_assem_roary_pa.csv"
+cp ${folder}/prokka_assem/roary_out/gene_presence_absence.Rtab "./pipeline_assem_results/${folder}_prokka_assem_roary_pa.Rtab"
+
+cp ${folder}/prokka_assem/panaroo_out/gene_presence_absence.csv "./pipeline_assem_results/${folder}_prokka_assem_panaroo_pa.csv"
+cp ${folder}/prokka_assem/panaroo_out/gene_presence_absence.Rtab "./pipeline_assem_results/${folder}_prokka_assem_panaroo_pa.Rtab"
+
+cp ${folder}/prokka_assem/panaroo_no_consensus_rm_out/gene_presence_absence.csv "./pipeline_assem_results/${folder}_prokka_assem_norm_panaroo_pa.csv"
+cp ${folder}/prokka_assem/panaroo_no_consensus_rm_out/gene_presence_absence.Rtab "./pipeline_assem_results/${folder}_prokka_assem_norm_panaroo_pa.Rtab"
+
+
+done
+```
+
+```{python}
+import glob
+
+with open("assem_mapping.csv", 'w') as outfile:
+    outfile.write("file,id,annotation\n")
+    for gfffile in glob.glob("./sim*/prokka_assem/*/*.gff"):
+        with open(gfffile, 'r') as infile:
+            for line in infile:
+                if line[0]=="#": continue
+                if "CDS" not in line: continue
+                if "##FASTA" in line: break
+                line = line.strip().split("\t")
+                annotations  = line[8]
+                ID = annotations.split(";")[0].split("=")[1]
+                if ".fasta" not in annotations:
+                    anno = "NA"
+                else:
+                    anno = annotations.split(";")[1].split(":")[-1]
+                file = gfffile.split("/")[-1].split(".")[0]
+                outfile.write(",".join([file, ID, anno]) + "\n")
+```
+
+
+
+```
+art_illumina -ss HS25 -sam -i reference.fa -p -l 150 -f 20 -m 200 -s 10 -o paired_dat
+
+```

@@ -1,0 +1,171 @@
+---
+title: "Results of simulated ecoli examples"
+author: "Gerry Tonkin-Hill"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Vignette Title}
+  %\VignetteEncoding{UTF-8}
+  %\VignetteEngine{knitr::rmarkdown}
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+##Load libraries
+
+```{r}
+library(ggplot2)
+library(data.table)
+library(purrr)
+library(parallel)
+library(clue)
+```
+
+##Load data
+
+```{r}
+sim_pa_files <- Sys.glob("./simulated_data/pipeline_results/*_presence_absence.csv")
+roary_inferred_pa_files <- Sys.glob("./simulated_data/pipeline_results/*prokka_no_assem_roary_pa.csv")
+panaroo_inferred_pa_files <- Sys.glob("./simulated_data/pipeline_results/*prokka_no_assem_panaroo_pa.csv")
+gene_annotations_files <- Sys.glob("./simulated_data/pipeline_results/*no_assem_gene_data.csv")
+```
+
+```{r}
+sim_pa <- map(sim_pa_files, ~ fread(.x, data.table = FALSE))
+roary_inferred_pa <- map(roary_inferred_pa_files, ~ fread(.x, data.table = FALSE))
+panaroo_inferred_pa <- map(panaroo_inferred_pa_files, ~ fread(.x, data.table = FALSE))
+gene_annotations <- map(gene_annotations_files, ~ fread(.x, data.table = FALSE))
+mapping_df <- fread("./simulated_data/pipeline_results/no_assem_mapping.csv", data.table = FALSE)
+```
+
+set up mapping vector
+```{r}
+lookup <- mapping_df$annotation
+names(lookup) <- paste(mapping_df$file, mapping_df$id, sep="_")
+lookup[is.na(lookup)] <- "unannotated"
+```
+
+set up function for calculating the errors
+
+```{r}
+count_errors <- function(m1, m2, missing, paralogs){
+  
+  stopifnot(ncol(m1)==ncol(m2))
+  
+  missing <- unique(unlist(missing))
+  for (i in 1:ncol(m1)){
+    m1[m1[,i] %in% missing, i] <- NA
+    m2[m2[,i] %in% missing, i] <- NA
+  }
+  
+  m1 <- m1[rowSums(m1!="", na.rm = TRUE)>0,]
+  m2 <- m2[rowSums(m2!="", na.rm = TRUE)>0,]
+  
+  m1 <- m1[order(-rowSums(m1!="", na.rm = TRUE)),]
+  
+  temp_m1 <- m1
+  temp_m2 <- m2
+  r <- matrix(NA, nrow = nrow(m1), ncol = 3)
+  score_total <- 0
+  temp_m1[temp_m1==""] <- NA
+  temp_m2[temp_m2==""] <- NA
+  for (i in 1:nrow(m1)){
+    rs <- rowSums(t(t(temp_m2) == temp_m1[i,]), na.rm = TRUE)
+    m <- which.max(rs)
+    if (rs[[m]]>0){
+      row_total <- sum(temp_m1[i,]!=temp_m2[m,], na.rm = TRUE) +
+        sum(is.na(m1[i,]) & (m2[m,]==""), na.rm = TRUE) +
+        sum((m1[i,]=="") & is.na(m2[m,]), na.rm = TRUE)
+      score_total <- score_total + row_total
+      r[i,] <- c(i, m, row_total)
+    } else {
+      r[i,] <- c(i, m, NA)
+    }
+  }
+  
+  remainder <- m2[-r[,2],,drop=FALSE]
+  if (nrow(remainder)>0){
+    remainder <- remainder[rowSums(m2[-r[,2],]!="" & !(m2[-r[,2],] %in% paralogs), na.rm = TRUE)>0,,drop=FALSE]
+  }
+  if (nrow(remainder)>0){
+    score_total <- score_total + sum(is.na(remainder)) + sum(remainder!="" & !(remainder %in% paralogs), na.rm = TRUE)  
+  }
+  
+  return(list(total_error=score_total))
+}
+```
+
+```{r}
+roary_pa <- lapply(roary_inferred_pa, function(pa){
+  temp <- pa[,15:ncol(pa)]
+  pa <- do.call(cbind, map(1:ncol(temp), function(i){
+    lookup[paste(colnames(temp)[[i]], temp[,i], sep="_")]
+  }))
+  colnames(pa) <- colnames(temp)
+  pa <- pa[,order(as.numeric(gsub(".*iso", "", gsub(".*iso_", "", colnames(pa)))))]
+  pa[is.na(pa)] <- ""
+  pa[pa=="unannotated"] <- NA
+  return(pa)
+})
+
+panaroo_pa <- map2(panaroo_inferred_pa, gene_annotations, function(pa, anno_tbl){
+  temp <- pa[,15:ncol(pa)]
+  temp_lookup <- anno_tbl$annotation_id
+  names(temp_lookup) <- anno_tbl$clustering_id
+  pa <- do.call(cbind, map(1:ncol(temp), function(i){
+    lookup[paste(colnames(temp)[[i]], temp_lookup[temp[,i]], sep="_")]
+  }))
+  colnames(pa) <- colnames(temp)
+  pa <- pa[,order(as.numeric(gsub(".*iso", "", gsub(".*iso_", "", colnames(pa)))))]
+  pa[is.na(pa)] <- ""
+  pa[pa=="unannotated"] <- NA
+  return(pa)
+})
+
+sim_pa <- lapply(sim_pa, function(pa){
+  pa <- t(apply(pa, 1, function(r){
+    temp <- r[2:ncol(pa)]
+    temp[temp==1] <- r[[1]]
+    temp[temp==0] <- ""
+    return(temp)
+  }))
+  pa <- pa[,order(as.numeric(gsub(".*iso", "", colnames(pa))))]
+})
+```
+
+Identify likely paralogs
+
+```{r}
+paralogs <- unique(unlist(map(roary_pa, ~ apply(.x, 2, function(pa){
+  unique(pa[duplicated(pa)])
+}))))
+paralogs <- paralogs[(!is.na(paralogs)) & (paralogs!="")]
+```
+
+
+```{r}
+results_df <- map_dfr(2:length(sim_pa), function(i){
+  print(i)
+  missing <- map(1:ncol(sim_pa[[i]]), 
+                               ~ sim_pa[[i]][,.x][!(sim_pa[[i]][,.x] %in% roary_pa[[i]][,.x])])
+  roary_error <- count_errors(sim_pa[[i]], roary_pa[[i]], missing = missing, paralogs = paralogs)
+  panaroo_error <- count_errors(sim_pa[[i]], panaroo_pa[[i]], missing = missing, paralogs = paralogs)
+  df <- data.frame(params=gsub(".csv", "", gsub(".*pan_", "", sim_pa_files[[i]])),
+             lost_in_anno=sum(map_dbl(1:ncol(sim_pa[[i]]), ~ sum(!(sim_pa[[i]][,.x] %in% roary_pa[[i]][,.x])))),
+             roary_error=roary_error$total_error,
+             panaroo_error=panaroo_error$total_error,
+             stringsAsFactors = FALSE)
+  print(df)
+  return(df)
+})
+
+results_df
+# write.csv(results_df, file = "no_assem_results.csv")
+```

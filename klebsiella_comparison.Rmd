@@ -1,0 +1,183 @@
+---
+title: "Comparison of Methods on a diverse Klebsiella dataset"
+author: "Gerry Tonkin-Hill"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    fig_width: 12
+    fig_height: 8
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(fig.width=20, fig.height=12,
+                      echo=TRUE, warning=FALSE, message=FALSE,
+                      tidy=TRUE)
+options(stringsAsFactors = FALSE)
+```
+
+##Load libraries
+
+```{r, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(data.table)
+library(purrr)
+library(RColorBrewer)
+library(aricode)
+```
+
+To compare the various tools on a diverse dataset we made use of 328 Klebsiella pneumoniae genomes collected from both human and animal sources across four continents. 
+
+
+**Holt,K.E., Wertheim,H., Zadoks,R.N., Baker,S., Whitehouse,C.A., Dance,D., Jenney,A., Connor,T.R., Hsu,L.Y., Severin,J., et al. (2015) Genomic analysis of diversity, population structure, virulence, and antimicrobial resistance in Klebsiella pneumoniae, an urgent threat to public health. Proc. Natl. Acad. Sci. U. S. A., 112, E3574–81.**
+
+###Run tools
+
+Prokka was run on each assembly using an initial BLAST annotation database built for Klebsiella.
+
+Next, each tool was run on the dataset. Panaroo was run in both strict and relaxed modes as well as being run seperately for the different species included in this dataset before combining the results using the merge tool.
+
+```
+roary -p 24 -f roary_out ./gff_files/*.gff
+
+PIRATE -t 24 -o pirate_out -i ./gff_files/
+subsample_outputs.pl -i PIRATE.gene_families.ordered.tsv -g modified_gffs/ -o ../pirate_gene_presence_absence.csv --field prev_ID
+
+python ~/panaroo/scripts/run_panx.py -t 24 -i ./gff_files/*.gbk -o panx_out
+
+panaroo -i ./gff_files/*.gff -o panaroo_all_out -t 24
+panaroo -i ./gff_files/*.gff -o panaroo_all_sensitive -t 24 --mode relaxed
+```
+
+To merge datasets each one must be first analysed using the panaroo pipeline without cleaning up edges.
+
+```
+panaroo -i ./kpI/*.gff -o panaroo_kpI -t 24 --no_clean_edges
+panaroo -i ./kpII/*.gff -o panaroo_kpII -t 24 --no_clean_edges
+panaroo -i ./kpIII/*.gff -o panaroo_kpIII -t 24 --no_clean_edges
+
+panaroo-merge -d kpI kpII kpIII -o panaroo_merged -t 24
+```
+
+###Load results
+
+```{r}
+panaroo <- fread("./klebsiella_pa_files/panaroo_strict_gene_presence_absence.csv", data.table = FALSE)
+panaroo_sensitive <- fread("./klebsiella_pa_files/panaroo_sensitive_gene_presence_absence.csv", data.table = FALSE)
+panaroo_merge <- fread("./klebsiella_pa_files/panaroo_merged_gene_presence_absence.csv", data.table = FALSE)
+pirate <- fread("./klebsiella_pa_files/pirate_gene_presence_absence.csv", data.table = FALSE)
+panx <- fread("./klebsiella_pa_files/panx_gene_presence_absence.csv", data.table = FALSE)
+roary <- fread("./klebsiella_pa_files/roary_gene_presence_absence.csv", data.table = FALSE)
+
+pa_tables <- list(
+  panaroo=panaroo[,15:ncol(panaroo)],
+  panaroo_sensitive=panaroo_sensitive[,15:ncol(panaroo)],
+  panaroo_merge=panaroo_merge[,15:ncol(panaroo)],
+  roary=roary[,15:ncol(roary)],
+  pirate=pirate[,23:ncol(pirate)],
+  panx=panx
+)
+```
+
+###Distribution of Core/Accessory
+
+```{r}
+sizes_df <- imap_dfr(pa_tables, ~ tibble(
+                            method=.y,
+                            total=nrow(.x), 
+                            core=sum(rowSums(.x!="")>(0.95*ncol(.x))), 
+                            accessory=sum(rowSums(.x!="")<=(0.95*ncol(.x)))))
+
+# correct for the way PIRATE presents duplications
+sizes_df$accessory[sizes_df$method=="pirate"] <- sizes_df$accessory[sizes_df$method=="pirate"] +
+  sum(apply(pa_tables[['pirate']], 1, function(r) {
+    r <- r[grepl(".*;.*", r) & (!grepl(".*[()].*", r))]
+    return(max(c(map_dbl(r, ~ str_count(.x, ";")), 0)))
+    }))
+
+# create a nice plot
+plot_df <- melt(sizes_df, id.vars="method", variable.name="category", value.name="count")
+ggplot(plot_df, aes(x=method, y=count, fill=method)) + 
+  geom_col() +
+  facet_wrap(~category, ncol = 1, scales = "free_y") + 
+  theme_bw(base_size = 14)
+```
+
+###Agreement Between Methods
+
+As panaroo is the only method that can both remove and refind annotations we restrict this comparison to gene annotations that are present in across all methods.
+
+```{r}
+#get shared annotations
+all_annotations <- unique(unlist(pa_tables[['panaroo']]))
+all_annotations <- all_annotations[(all_annotations!="") & !grepl(".*refound.*", all_annotations)]
+all_annotations <- unlist(map(all_annotations, ~ str_split(.x, ";")))
+
+temp_anno <- unique(unlist(pa_tables[['panaroo_sensitive']]))
+temp_anno <- temp_anno[temp_anno!=""]
+all_annotations <- all_annotations[all_annotations %in% temp_anno]
+
+temp_anno <- unique(unlist(pa_tables[['panaroo_merge']]))
+temp_anno <- temp_anno[temp_anno!=""]
+all_annotations <- all_annotations[all_annotations %in% temp_anno]
+
+temp_anno <- unique(unlist(pa_tables[['roary']]))
+temp_anno <- temp_anno[temp_anno!=""]
+all_annotations <- all_annotations[all_annotations %in% temp_anno]
+
+temp_anno <- unique(unlist(pa_tables[['pirate']]))
+temp_anno <- temp_anno[temp_anno!=""]
+temp_anno <- gsub("[()]", "", unlist(str_split(unlist(temp_anno), ";|:")))
+all_annotations <- all_annotations[all_annotations %in% temp_anno]
+
+temp_anno <- unique(unlist(pa_tables[['panx']]))
+temp_anno <- temp_anno[temp_anno!=""]
+all_annotations <- all_annotations[all_annotations %in% temp_anno]
+
+# determine clustering ids based on rows
+clusterings <- map(pa_tables, function(pa){
+  temp <- str_split(unlist(t(pa)), ";|:")
+  cluster <- rep(1:nrow(pa), each=ncol(pa))
+  r <- map_int(temp, length)
+  
+  temp <- tibble(
+    gene=gsub("[()]", "", unlist(temp)),
+    cluster=rep(cluster, r))
+  temp <- temp[temp$gene %in% all_annotations,]
+  temp <- temp[match(all_annotations, temp$gene),]
+  
+  return(temp$cluster)
+})
+
+# calculate Rand Index between each method
+result <- matrix(NA, nrow = length(clusterings), ncol = length(clusterings),
+            dimnames = list(names(clusterings), names(clusterings)))
+for (i in 1:(length(clusterings)-1)){
+  for (j in (i+1):length(clusterings)){
+    result[i,j] <- aricode::RI(clusterings[[i]], clusterings[[j]])
+    result[j,i] <- result[i,j]
+  }
+}
+
+# plot the results
+plotdf <- melt(result, value.name="Rand Index")
+l <- unique(plotdf$Var1)
+plotdf$Var1 <- factor(plotdf$Var1, levels = l)
+plotdf$Var2 <- factor(plotdf$Var2, levels = l)
+ggplot(data = plotdf, aes(x=Var1, y=Var2, fill=`Rand Index`)) + 
+  geom_tile() +
+  theme_bw(base_size = 14) +
+  xlab("") + ylab("")
+```
+
+
+
+
+
+
+
+
+
+
