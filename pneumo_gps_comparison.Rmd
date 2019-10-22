@@ -8,6 +8,9 @@ output:
     fig_height: 8
 editor_options: 
   chunk_output_type: console
+bibliography: references.bib
+nocite: | 
+  @Gladstone2019-rz
 ---
 
 ```{r setup, include = FALSE}
@@ -60,7 +63,7 @@ mkdir panaroo_merged_out
 panaroo-merge -d [0-9]* -o panaroo_merged_out -t 24 --verbose
 ```
 
-We next used one of the Panaroo post processing functions to infer the paramters of the Infinitely Many Genes (IMG) model as described in **Collins,R.E. and Higgs,P.G. (2012) Testing the Infinitely Many Genes Model for the Evolution of the Bacterial Core Genome and Pangenome. Mol. Biol. Evol., 29, 3413–3425.** and **Baumdicker,F. and Pfaffelhuber,P. (2014) The infinitely many genes model with horizontal gene transfer. Electron. J. Probab., 19.**
+We next used one of the Panaroo post processing functions to infer the paramters of the Infinitely Many Genes (IMG) model as described in @Collins2012-yf and @Baumdicker2012-wj.
 
 ```
 for folder in [0-9]*
@@ -73,7 +76,7 @@ cd ../..
 done
 ```
 
-We also inferred the parameters of the Finitely Many Genes model as described in **Zamani-Dahaj,S.A., Okasha,M., Kosakowski,J. and Higgs,P.G. (2016) Estimating the Frequency of Horizontal Gene Transfer Using Phylogenetic Models of Gene Gain and Loss. Mol. Biol. Evol., 33, 1843–1857.**
+We also inferred the parameters of the Finitely Many Genes model as described in [@Zamani-Dahaj2016-gi]
 
 ```
 for folder in [0-9]*
@@ -84,3 +87,200 @@ python ~/panaroo/panaroo-estimate-fmg.py --model FMG --tree GPSC${folder}_BD.tre
 cd ../..
 done
 ```
+
+After moving the resulting files into a single directory we can now load the results.
+
+```{r}
+# get a list of the output files
+fmg_param_files <- Sys.glob("./pneumo_gps_data/fmg_estimates/*")
+img_size_files <- Sys.glob("./pneumo_gps_data/img_estimates/*size*")
+img_param_files <- Sys.glob("./pneumo_gps_data/img_estimates/*param*")
+
+# load the data in a useful format
+fmg_params <- map_dfr(fmg_param_files, function(x){
+                  tbl <- fread(x, 
+                          data.table = FALSE, 
+                          skip = 4, 
+                          col.names = c("param", "estimate", "2.5CI", "97.5CI"))
+                  tbl$GPSC <- gsub("_.*", "", gsub(".*/", "", x))
+                  tbl$method <-  gsub(".*_", "", gsub("_fmg.*", "", x))
+                  return(tbl)
+                  })
+
+img_params <- map_dfr(img_param_files, function(x){
+  tbl <- fread(x,
+               data.table = FALSE,
+               header = TRUE)
+  tbl$GPSC <- gsub("_.*", "", gsub(".*/", "", x))
+  tbl$method <-  gsub(".*_", "", gsub("_infered.*", "", x))
+  return(tbl)
+})
+
+img_sizes <- map_dfr(img_size_files, function(x){
+  tbl <- fread(x,
+               data.table = FALSE,
+               header = TRUE)
+  tbl$GPSC <- gsub("_.*", "", gsub(".*/", "", x))
+  tbl$method <-  gsub(".*_", "", gsub("_core.*", "", x))
+  return(tbl)
+})
+```
+
+We can also load some additional supplementary information from @Gladstone2019-rz.
+
+```{r}
+odds_ratio <- fread("./pneumo_gps_data/GPSC_OR.csv", data.table = FALSE)
+sig_odds <- tibble(GPSC=odds_ratio$GPSC, log_odds=log(odds_ratio$logOR), issig=odds_ratio$pvalue<0.05)
+odds_ratio <- tibble(GPSC=rep(odds_ratio$GPSC, 2),
+                     param="odds_ratio",
+                     estimate=rep(odds_ratio$logOR,2),
+                     `2.5CI`=NA, `97.5CI`=NA,
+                     method=rep(c("sensitive", "strict"), each=nrow(odds_ratio)))
+recombination <- fread("./pneumo_gps_data/GPSC_recombination_T11.csv", data.table = FALSE)
+recombination <- recombination[!is.na(recombination$GPSC),]
+recombination <- tibble(GPSC=rep(recombination$GPSC, 2),
+                     param="r/m",
+                     estimate=rep(recombination$`r/m`,2),
+                     `2.5CI`=NA, `97.5CI`=NA,
+                     method=rep(c("sensitive", "strict"), each=nrow(recombination)))
+
+cluster_sizes <- img_sizes %>% group_by(GPSC) %>%
+  summarise(count=n())
+cluster_sizes <- tibble(GPSC=rep(cluster_sizes$GPSC, 2),
+                     param="cluster size",
+                     estimate=rep(cluster_sizes$count,2),
+                     `2.5CI`=NA, `97.5CI`=NA,
+                     method=rep(c("sensitive", "strict"), each=nrow(cluster_sizes)))
+
+diversity <- fread("./pneumo_gps_data/GPSC_diversity_T8.csv", data.table = FALSE)
+diversity <- tibble(GPSC=rep(diversity$GPSC, 2),
+                     param="country diversity",
+                     estimate=rep(diversity$`% PCV13`,2),
+                     `2.5CI`=NA, `97.5CI`=NA,
+                     method=rep(c("sensitive", "strict"), each=nrow(diversity)))
+
+other_data <- fread("./pneumo_gps_data/GPSC_summary_T1.csv", data.table = FALSE)
+n_serotypes <- other_data %>% group_by(GPSC) %>%
+  summarise(n_sero=length(unique(In_Silico_Serotype)))
+n_serotypes <- tibble(GPSC=rep(n_serotypes$GPSC, 2),
+                     param="num sero",
+                     estimate=rep(n_serotypes$n_sero,2),
+                     `2.5CI`=NA, `97.5CI`=NA,
+                     method=rep(c("sensitive", "strict"), each=nrow(n_serotypes)))
+```
+
+Merge the data together ready for plotting.
+
+```{r}
+fmg_params <- rbind(fmg_params, cluster_sizes)
+fmg_params <- rbind(fmg_params, recombination[recombination$GPSC %in% fmg_params$GPSC,])
+fmg_params <- rbind(fmg_params, odds_ratio[odds_ratio$GPSC %in% fmg_params$GPSC,])
+fmg_params <- rbind(fmg_params, n_serotypes[n_serotypes$GPSC %in% fmg_params$GPSC,])
+fmg_params <- rbind(fmg_params, diversity[diversity$GPSC %in% fmg_params$GPSC,])
+```
+
+Plot the estimated parameters for the Finitely Many Genes model along with some metadata for each GPSC
+
+```{r}
+tmp <- fmg_params[fmg_params$param=="M" & fmg_params$method=="strict",]
+tmp <- tmp$GPSC[order(-tmp$estimate)]
+tmp <- c(tmp, unique(fmg_params$GPSC[!(fmg_params$GPSC %in% tmp)]))
+fmg_params$GPSC <- factor(fmg_params$GPSC, levels = tmp)
+
+ggplot(fmg_params[fmg_params$method=="strict",], aes(x=GPSC, y=estimate)) + 
+  geom_col() +
+  facet_wrap(~ param, ncol = 1, scales = "free_y") +
+  theme_bw(base_size = 14)
+```
+
+From this plot it looks like there could be a weak association between genome gain/loss rate and the odds ratio of the lineage. It also looks like there might be a weak association between the number of seroptypes, the recombination rate and the estiamted size of the pangenome pool (M). We can perform a simple 
+
+```{r}
+fmg_params$param[fmg_params$param=="odds_ratio"] <- "odds ratio"
+fmg_params$param[fmg_params$param=="num sero"] <- "unique serotypes"
+fmg_data <- dcast(fmg_params, method+GPSC ~ param, value.var="estimate")
+fmg_data <- fmg_data[fmg_data$method=="strict",]
+
+cor(fmg_data$M, fmg_data$`unique serotypes`, method = "spearman")
+cor.test(fmg_data$M, fmg_data$`unique serotypes`, method = "spearman")
+
+fmg_data <- fmg_data[!is.na(fmg_data$`r/m`),]
+cor(fmg_data$M, fmg_data$`r/m`, method = "spearman")
+cor.test(fmg_data$M, fmg_data$`r/m`, method = "spearman")
+```
+
+
+```{r}
+fmg_data <- dcast(fmg_params, method+GPSC ~ param, value.var="estimate")
+fmg_data <- fmg_data[fmg_data$method=="strict",]
+fmg_data <- fmg_data[!is.na(fmg_data$`odds ratio`),]
+
+cor(fmg_data$a, fmg_data$`odds ratio`, method = "spearman")
+cor.test(fmg_data$a, fmg_data$`odds ratio`, method = "spearman")
+
+fmg_data <- merge(sig_odds, fmg_data, by.x = "GPSC", by.y = "GPSC")
+fmg_data$disease <- fmg_data$log_odds>0
+mylogit <- glm(disease ~ a, data = fmg_data[fmg_data$issig,], family = "binomial")
+summary(mylogit)
+```
+
+We can now make a prettier picture that focuses on these results.
+
+```{r}
+plotdf <- fmg_params[fmg_params$method=="strict",]
+plotdf <- plotdf[plotdf$param %in% c('a','v','G','M','unique serotypes','odds ratio','r/m'),]
+
+library(wesanderson)
+library(patchwork)
+
+plotdf$param[plotdf$param=='G'] <- "mean number of genes per genome (G)"
+plotdf$param[plotdf$param=='M'] <- "pangeome pool size (M)"
+plotdf$param[plotdf$param=='a'] <- "gene gain rate (a)"
+plotdf$param[plotdf$param=='v'] <- "gene loss rate (v)"
+plotdf$param[plotdf$param=='odds ratio'] <- "log odds ratio"
+plotdf$param <- factor(plotdf$param, levels = c("gene gain rate (a)",
+                                             "gene loss rate (v)",
+                                             "mean number of genes per genome (G)",
+                                             "pangeome pool size (M)",
+                                             'log odds ratio','r/m','unique serotypes'))
+plotdf$estimate[plotdf$param=="log odds ratio"] <- log(plotdf$estimate[plotdf$param=="log odds ratio"])
+plotdf$param2 <- as.character(plotdf$param)
+plotdf$param2[(plotdf$param=="log odds ratio") & (plotdf$GPSC %in% sig_odds$GPSC[sig_odds$issig])] <- "sig"
+
+cols <- c(wes_palette("Darjeeling1")[c(1,2)],
+          wes_palette("Darjeeling2")[c(1)],
+          wes_palette("Darjeeling2")[c(2)], 
+          wes_palette("Darjeeling1")[c(4)],
+          wes_palette("Darjeeling2")[c(4)],
+          wes_palette("Darjeeling2")[[3]],
+          wes_palette("Darjeeling1")[[3]])
+
+ggplot(plotdf, aes(x=GPSC, y=estimate, fill=param2)) + 
+  geom_col() +
+  facet_wrap(~ param, ncol = 1, scales = "free_y") +
+  theme_bw(base_size = 14) +
+  scale_fill_manual(values = cols) +
+  theme(legend.position = "none")
+```
+
+We can also focus in on the association between gene gain/loss rates and the log odds ratio of invasive disease 
+
+```{r}
+tmp <- plotdf[plotdf$param=="gene gain rate (a)" ,]
+tmp <- tmp$GPSC[order(-tmp$estimate)]
+plotdf$GPSC <- factor(plotdf$GPSC, levels = tmp)
+
+cols <- c(wes_palette("Darjeeling1")[c(1,2)], #k
+          wes_palette("Darjeeling2")[c(1)], #k
+          wes_palette("Darjeeling2")[[3]])
+
+ggplot(plotdf[plotdf$param %in% c("gene gain rate (a)", "gene loss rate (v)", 'log odds ratio'),], 
+       aes(x=GPSC, y=estimate, fill=param2)) + 
+  geom_col() +
+  facet_wrap(~ param, ncol = 1, scales = "free_y") +
+  theme_bw(base_size = 14) +
+  scale_fill_manual(values = cols) +
+  theme(legend.position = "none")
+```
+
+###References
