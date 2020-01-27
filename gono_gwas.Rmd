@@ -24,6 +24,7 @@ library(data.table)
 library(ggplot2)
 library(knitr)
 library(purrr)
+library(stringr)
 library(piggyback)
 ```
 
@@ -86,8 +87,8 @@ python ~/pyseer/scripts/count_patterns.py ./pyseer_out/gene_patterns_AZM.txt
 This results in:
 
 ```
-Patterns:       529
-Threshold:      9.45E-05
+Patterns:       549
+Threshold:      9.11E-05
 ```
 
 We can also run Pyseer on the presence/absence matrix of sructural variations output by Panaroo.
@@ -108,8 +109,8 @@ python ~/pyseer/scripts/count_patterns.py ./pyseer_out/struct_patterns_AZM.txt
 which gives
 
 ```
-Patterns:       3239
-Threshold:      1.54E-05
+Patterns:       2779
+Threshold:      1.80E-05
 ```
 
 We now have everything we need to start looking at some results!
@@ -127,7 +128,7 @@ gono_gwas <- gono_gwas[order(gono_gwas$`lrt-pvalue`),]
 gono_gwas <- gono_gwas[!grepl("bad-chisq", gono_gwas$notes),]
 
 # threshold form running count_patterns in pyseer
-sig_threshold <- 0.05/(529*length(antibiotics))
+sig_threshold <- 0.05/(549*length(antibiotics))
 
 sum(gono_gwas$`lrt-pvalue`<sig_threshold)
 sig_hits <- gono_gwas[gono_gwas$`lrt-pvalue`<sig_threshold,]
@@ -136,7 +137,7 @@ sig_hits <- gono_gwas[gono_gwas$`lrt-pvalue`<sig_threshold,]
 We can now add some annotation information to make things a bit easier to interpret.
 
 ```{r}
-full_pa_tbl <- fread("./gono_harris_gwas/gene_presence_absence.csv", data.table = FALSE)
+full_pa_tbl <- fread("./gono_harris_gwas/gene_presence_absence_roary.csv", data.table = FALSE)
 results <- merge(sig_hits, full_pa_tbl, by.x = "variant", by.y = "Gene", all.x = TRUE)
 results <- results[order(results$`lrt-pvalue`),]
 
@@ -146,6 +147,7 @@ results[,c("variant", "lrt-pvalue", "beta", "beta-std-err","antibiotic", "Annota
 
 top_anno_gwas_hits <- results[results$Annotation!="hypothetical protein",c("variant", "lrt-pvalue", "beta", "beta-std-err", "antibiotic","Annotation")]
 
+# we now output the results to csv. This can be input to cytoscape along with the final graph from Panaroo for visualisation.
 write.csv(top_anno_gwas_hits, file="./gono_harris_gwas/gono_gwas_annotated.csv", quote = FALSE)
 ```
 
@@ -162,11 +164,19 @@ gono_struct_was <- gono_struct_was[order(gono_struct_was$`lrt-pvalue`),]
 gono_struct_was <- gono_struct_was[!grepl("bad-chisq", gono_struct_was$notes),]
 
 # threshold form running count_patterns in pyseer
-sig_threshold <- 0.05/(3239*length(antibiotics))
+sig_threshold <- 0.05/(2779*length(antibiotics))
 
 sum(gono_struct_was$`lrt-pvalue`<sig_threshold)
 top_results <- gono_struct_was[gono_struct_was$`lrt-pvalue`<sig_threshold,]
 top_results <- top_results[!duplicated(top_results$variant),]
 
 write.csv(top_results, file="./gono_harris_gwas/gono_struct_was_annotated.csv", quote = FALSE)
+
+# we can also create results file for input to cytoscape
+cyto_output <- map_dfr(1:nrow(top_results), ~ data.frame(gene=unlist(str_split(top_results[.x,1], "-")),
+                                          svariant=rep(top_results[.x,1], 3),
+                                          lrtpvalue=rep(top_results[.x,4], 3),
+                                          beta=rep(top_results[.x,5], 3), 
+                                          stringsAsFactors = FALSE))
+write.csv(cyto_output, file="./gono_harris_gwas/gono_struct_was_cytoscape_output.csv", quote = FALSE, row.names = FALSE)
 ```

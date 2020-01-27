@@ -94,9 +94,11 @@ panx_pa <- fread("./tb_outbreak_pa_files/panx_gene_presence_absence.csv", data.t
 panx_pa <- as.matrix(panx_pa)
 pirate_pa <- fread("./tb_outbreak_pa_files/PIRATE.gene_families.ordered.tsv", data.table = FALSE)
 pirate_pa <- as.matrix(pirate_pa[,23:ncol(pirate_pa)])
+cog_pa <- fread("./tb_outbreak_pa_files/cogsoft_gene_presence_absence.csv", data.table = FALSE)
+cog_pa <- as.matrix(cog_pa)
 
-pa_matrices <- list(panaroo_pa, roary_pa, panx_pa, pirate_pa)
-names(pa_matrices) <- c("Panaroo", "Roary", "PanX", "PIRATE")
+pa_matrices <- list(panaroo_pa, roary_pa, panx_pa, pirate_pa, cog_pa)
+names(pa_matrices) <- c("Panaroo", "Roary", "PanX", "PIRATE", "COGsoft")
 ```
 
 We can now look at the distribution of the pangenome, core and accessory sizes inferred by the different methods.
@@ -118,6 +120,7 @@ result_99_df <- imap_dfr(pa_matrices, ~ data.frame(method=.y,
                                                    data.frame(t(calc_pan_sizes(.x, core_fraction = 0.99))), 
                                                    stringsAsFactors = FALSE))
 result_99_df <- data.table::melt(result_99_df, id.vars="method", variable.name="category", value.name="count")
+result_99_df$method <- factor(result_99_df$method, levels = c("Panaroo","PanX", "PIRATE", "Roary", "COGsoft"))
 
 ggplot(result_99_df, aes(x=method, y=count, fill=method)) + geom_col() +
   facet_wrap(~category, ncol = 1, scales = "free_y") +
@@ -132,7 +135,7 @@ result_98_df <- imap_dfr(pa_matrices, ~ data.frame(method=.y,
                                                    data.frame(t(calc_pan_sizes(.x, core_fraction = 0.98))), 
                                                    stringsAsFactors = FALSE))
 result_98_df <- data.table::melt(result_98_df, id.vars="method", variable.name="category", value.name="count")
-
+result_98_df$method <- factor(result_98_df$method, levels = c("Panaroo","PanX", "PIRATE", "Roary", "COGsoft"))
 ggplot(result_98_df, aes(x=method, y=count, fill=method)) + geom_col() +
   facet_wrap(~category, ncol = 1, scales = "free_y") +
   theme_bw(base_size = 16) +
@@ -153,7 +156,54 @@ ggplot(result_95_df, aes(x=method, y=count, fill=method)) + geom_col() +
   scale_fill_brewer(palette="Set1")
 ```
 
+Look at what genes have been excluded by comparing with PanX. The majority of changes are due to fragments being collapsed.
+
+```{r}
+temp <- apply(panaroo_pa, 1, function(x) grepl(".*;.*", x))
+nrows_collaped_panaroo <- sum(colSums(temp)>0)
+nrows_collaped_panaroo
+
+collapsed_genes <- unlist(panaroo_pa[colSums(temp)>0,])
+collapsed_genes <- unlist(stringr::str_split(collapsed_genes, ";"))
+collapsed_genes <- collapsed_genes[!grepl(".*refound.*", collapsed_genes)]
+collapsed_genes <- collapsed_genes[collapsed_genes!=""]
+
+equivalent_in_panx <- sum(apply(panx_pa, 1, function(x) sum(x %in% collapsed_genes))>0)
+equivalent_in_panx
+
+# difference between the two
+equivalent_in_panx-nrows_collaped_panaroo
+(equivalent_in_panx-nrows_collaped_panaroo)/(
+  result_99_df$count[result_99_df$method=="PanX" & result_99_df$category=="accessory"] -
+    result_99_df$count[result_99_df$method=="Panaroo" & result_99_df$category=="accessory"])
+```
+
+The remaining missing genes have mostly been removed by consensus calls. That is, the gene sequence appears in more more samples than it has been called in suggesting that the majority of the time the gene annotation software does not annotate a gene at this location.
+
+```{r}
+missing <- unlist(panx_pa)[!(unlist(panx_pa) %in% unlist(stringr::str_split(unlist(panaroo_pa), ";")))]
+# number of annotations that have been removed
+length(missing)
+
+panaroo_sensitive <- fread("./tb_outbreak_pa_files/panaroo_sensitive_gene_presence_absence.csv", data.table = FALSE)
+panaroo_sensitive <- as.matrix(panaroo_sensitive[,15:ncol(panaroo_sensitive)])
+temp <- apply(panaroo_sensitive, 1, function(x) grepl(".*refound.*", x))
+sum((2*colSums(temp))>rowSums(panaroo_sensitive!=""))
 
 
+genes_removed_by_consensus <- unlist(panaroo_sensitive[(2*colSums(temp))>rowSums(panaroo_sensitive!=""),])
+genes_removed_by_consensus <- genes_removed_by_consensus[!grepl(".*refound.*", genes_removed_by_consensus)]
+genes_removed_by_consensus <- genes_removed_by_consensus[genes_removed_by_consensus!=""]
+
+# number of annotations that have been removed due to consensus calls.
+sum(missing %in% genes_removed_by_consensus)
+
+missing_by_consensus <- missing[missing %in% genes_removed_by_consensus]
+missing_by_consensus_rows <- sum(apply(panx_pa, 1, function(r) sum(r %in% missing_by_consensus)>0))
+
+missing_by_consensus_rows/(
+  result_99_df$count[result_99_df$method=="PanX" & result_99_df$category=="accessory"] -
+    result_99_df$count[result_99_df$method=="Panaroo" & result_99_df$category=="accessory"])
+```
 
 

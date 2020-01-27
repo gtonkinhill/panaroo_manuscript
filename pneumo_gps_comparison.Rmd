@@ -29,6 +29,13 @@ library(RColorBrewer)
 library(piggyback)
 ```
 
+```{r, eval=FALSE}
+pb_download("pneumo_gps_data.zip", 
+            repo = "gtonkinhill/panaroo_manuscript", 
+            dest = "./")
+unzip("pneumo_gps_data.zip")
+```
+
 To demonstrate Panaroo's ability to scale to large datasets and to infer pangenome evolutionary paramters we investigated a subsection of the large Global Pneumococcal Sequenceing (GPS) project.
 
 **Gladstone,R.A., Lo,S.W., Lees,J.A., Croucher,N.J., van Tonder,A.J., Corander,J., Page,A.J., Marttinen,P., Bentley,L.J., Ochoa,T.J., et al. (2019) International genomic definition of pneumococcal lineages, to contextualise disease, antibiotic resistance and vaccine impact. EBioMedicine, 43, 338–346.**
@@ -92,9 +99,10 @@ After moving the resulting files into a single directory we can now load the res
 
 ```{r}
 # get a list of the output files
-fmg_param_files <- Sys.glob("./pneumo_gps_data/fmg_estimates/*")
-img_size_files <- Sys.glob("./pneumo_gps_data/img_estimates/*size*")
-img_param_files <- Sys.glob("./pneumo_gps_data/img_estimates/*param*")
+fmg_param_files <- Sys.glob("./pneumo_gps_data/fmg_estimates/*.txt")
+# img_size_files <- Sys.glob("./pneumo_gps_data/img_estimates/*size*")
+# img_param_files <- Sys.glob("./pneumo_gps_data/img_estimates/*param*")
+binary_pa_files <- Sys.glob("./pneumo_gps_data/binary_pa_matrices/*_strict_gene_presence_absence.Rtab")
 
 # load the data in a useful format
 fmg_params <- map_dfr(fmg_param_files, function(x){
@@ -107,23 +115,40 @@ fmg_params <- map_dfr(fmg_param_files, function(x){
                   return(tbl)
                   })
 
-img_params <- map_dfr(img_param_files, function(x){
-  tbl <- fread(x,
-               data.table = FALSE,
-               header = TRUE)
-  tbl$GPSC <- gsub("_.*", "", gsub(".*/", "", x))
-  tbl$method <-  gsub(".*_", "", gsub("_infered.*", "", x))
-  return(tbl)
-})
+#load cluster sizes
+cluster_sizes <- map_dfr(binary_pa_files, function(x){
+                  m <- fread(x, 
+                          data.table = FALSE)
+                  tbl <- data.frame(GPSC = gsub("_.*", "", gsub(".*/", "", x)),
+                                    size = ncol(m) -1, 
+                                    stringsAsFactors = FALSE)
+                  return(tbl)
+                  })
+cluster_sizes <- melt(cluster_sizes)
+cluster_sizes <- tibble(param=cluster_sizes$variable,
+                            estimate=as.numeric(cluster_sizes$variable),
+                            `2.5CI`=NA,
+                            `97.5CI`=NA,
+                            GPSC=as.numeric(cluster_sizes$GPSC),
+                            method=rep("strict", nrow(cluster_sizes)))
 
-img_sizes <- map_dfr(img_size_files, function(x){
-  tbl <- fread(x,
-               data.table = FALSE,
-               header = TRUE)
-  tbl$GPSC <- gsub("_.*", "", gsub(".*/", "", x))
-  tbl$method <-  gsub(".*_", "", gsub("_core.*", "", x))
-  return(tbl)
-})
+# img_params <- map_dfr(img_param_files, function(x){
+#   tbl <- fread(x,
+#                data.table = FALSE,
+#                header = TRUE)
+#   tbl$GPSC <- gsub("_.*", "", gsub(".*/", "", x))
+#   tbl$method <-  gsub(".*_", "", gsub("_infered.*", "", x))
+#   return(tbl)
+# })
+# 
+# img_sizes <- map_dfr(img_size_files, function(x){
+#   tbl <- fread(x,
+#                data.table = FALSE,
+#                header = TRUE)
+#   tbl$GPSC <- gsub("_.*", "", gsub(".*/", "", x))
+#   tbl$method <-  gsub(".*_", "", gsub("_core.*", "", x))
+#   return(tbl)
+# })
 ```
 
 We can also load some additional supplementary information from @Gladstone2019-rz.
@@ -144,13 +169,13 @@ recombination <- tibble(GPSC=rep(recombination$GPSC, 2),
                      `2.5CI`=NA, `97.5CI`=NA,
                      method=rep(c("sensitive", "strict"), each=nrow(recombination)))
 
-cluster_sizes <- img_sizes %>% group_by(GPSC) %>%
-  summarise(count=n())
-cluster_sizes <- tibble(GPSC=rep(cluster_sizes$GPSC, 2),
-                     param="cluster size",
-                     estimate=rep(cluster_sizes$count,2),
-                     `2.5CI`=NA, `97.5CI`=NA,
-                     method=rep(c("sensitive", "strict"), each=nrow(cluster_sizes)))
+# cluster_sizes <- img_sizes %>% group_by(GPSC) %>%
+#   summarise(count=n())
+# cluster_sizes <- tibble(GPSC=rep(cluster_sizes$GPSC, 2),
+#                      param="cluster size",
+#                      estimate=rep(cluster_sizes$count,2),
+#                      `2.5CI`=NA, `97.5CI`=NA,
+#                      method=rep(c("sensitive", "strict"), each=nrow(cluster_sizes)))
 
 diversity <- fread("./pneumo_gps_data/GPSC_diversity_T8.csv", data.table = FALSE)
 diversity <- tibble(GPSC=rep(diversity$GPSC, 2),
@@ -222,6 +247,9 @@ fmg_data <- merge(sig_odds, fmg_data, by.x = "GPSC", by.y = "GPSC")
 fmg_data$disease <- fmg_data$log_odds>0
 mylogit <- glm(disease ~ a, data = fmg_data[fmg_data$issig,], family = "binomial")
 summary(mylogit)
+
+mylogit <- glm(disease ~ v, data = fmg_data[fmg_data$issig,], family = "binomial")
+summary(mylogit)
 ```
 
 We can now make a prettier picture that focuses on these results.
@@ -281,6 +309,22 @@ ggplot(plotdf[plotdf$param %in% c("gene gain rate (a)", "gene loss rate (v)", 'l
   theme_bw(base_size = 14) +
   scale_fill_manual(values = cols) +
   theme(legend.position = "none")
+```
+
+We can also look at the raw Panaroo gene counts
+
+```{r}
+pa_files <- Sys.glob("pneumo_gps_data/binary_pa_matrices/*.Rtab")
+
+pa_matrices <- map(pa_files, ~ fread(.x, data.table = FALSE, drop = 1))
+
+raw_sizes_df <- tibble(GPSC=as.numeric(gsub("_s.*", "", gsub(".*pa_matrices/", "", pa_files))),
+      method=gsub(".*_s", "s", gsub("_gene.*", "", pa_files)),
+       ncore=map_dbl(pa_matrices, ~ sum(rowSums(.x)>(0.98*ncol(.x)))),
+       ngenes=map_dbl(pa_matrices, ~ nrow(.x)))
+
+write.csv(raw_sizes_df, file = "pneumo_gps_data/raw_sizes.csv",
+          quote = FALSE, row.names = FALSE)
 ```
 
 ###References

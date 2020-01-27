@@ -27,6 +27,8 @@ library(purrr)
 library(RColorBrewer)
 library(aricode)
 library(piggyback)
+library(seqinr)
+library(RWebLogo)
 ```
 
 ```{r, eval=FALSE}
@@ -66,26 +68,26 @@ panaroo -i ./kpI/*.gff -o panaroo_kpI -t 24 --no_clean_edges
 panaroo -i ./kpII/*.gff -o panaroo_kpII -t 24 --no_clean_edges
 panaroo -i ./kpIII/*.gff -o panaroo_kpIII -t 24 --no_clean_edges
 
-panaroo-merge -d kpI kpII kpIII -o panaroo_merged -t 24
+panaroo-merge -d panaroo_kpI panaroo_kpII panaroo_kpIII -o panaroo_merged -t 24
 ```
 
 ###Load results
 
 ```{r}
-panaroo <- fread("./klebsiella_pa_files/panaroo_strict_gene_presence_absence.csv", data.table = FALSE)
+panaroo <- fread("./klebsiella_pa_files/panaroo_gene_presence_absence.csv", data.table = FALSE)
 panaroo_sensitive <- fread("./klebsiella_pa_files/panaroo_sensitive_gene_presence_absence.csv", data.table = FALSE)
-panaroo_merge <- fread("./klebsiella_pa_files/panaroo_merged_gene_presence_absence.csv", data.table = FALSE)
 pirate <- fread("./klebsiella_pa_files/pirate_gene_presence_absence.csv", data.table = FALSE)
 panx <- fread("./klebsiella_pa_files/panx_gene_presence_absence.csv", data.table = FALSE)
 roary <- fread("./klebsiella_pa_files/roary_gene_presence_absence.csv", data.table = FALSE)
+cog <- fread("./klebsiella_pa_files/cogsoft_gene_presence_absence.csv", data.table = FALSE)
 
 pa_tables <- list(
   panaroo=panaroo[,15:ncol(panaroo)],
   panaroo_sensitive=panaroo_sensitive[,15:ncol(panaroo)],
-  panaroo_merge=panaroo_merge[,15:ncol(panaroo)],
   roary=roary[,15:ncol(roary)],
   pirate=pirate[,23:ncol(pirate)],
-  panx=panx
+  panx=panx,
+  cog=cog
 )
 ```
 
@@ -95,8 +97,8 @@ pa_tables <- list(
 sizes_df <- imap_dfr(pa_tables, ~ tibble(
                             method=.y,
                             total=nrow(.x), 
-                            core=sum(rowSums(.x!="")>(0.95*ncol(.x))), 
-                            accessory=sum(rowSums(.x!="")<=(0.95*ncol(.x)))))
+                            core=sum(rowSums(.x!="")>(0.99*ncol(.x))), 
+                            accessory=sum(rowSums(.x!="")<=(0.99*ncol(.x)))))
 
 # correct for the way PIRATE presents duplications
 sizes_df$accessory[sizes_df$method=="pirate"] <- sizes_df$accessory[sizes_df$method=="pirate"] +
@@ -106,11 +108,20 @@ sizes_df$accessory[sizes_df$method=="pirate"] <- sizes_df$accessory[sizes_df$met
     }))
 
 # create a nice plot
+sizes_df$method[sizes_df$method=="panaroo"] <- "Panaroo"
+sizes_df$method[sizes_df$method=="panaroo_sensitive"] <- "Panaroo (sensitive)"
+sizes_df$method[sizes_df$method=="panx"] <- "PanX"
+sizes_df$method[sizes_df$method=="pirate"] <- "PIRATE"
+sizes_df$method[sizes_df$method=="roary"] <- "Roary"
+sizes_df$method[sizes_df$method=="cog"] <- "COGsoft"
+
 plot_df <- melt(sizes_df, id.vars="method", variable.name="category", value.name="count")
+plot_df$method <- factor(plot_df$method, levels = c("Panaroo","Panaroo (sensitive)", "PanX", "PIRATE", "Roary", "COGsoft"))
 ggplot(plot_df, aes(x=method, y=count, fill=method)) + 
   geom_col() +
   facet_wrap(~category, ncol = 1, scales = "free_y") + 
-  theme_bw(base_size = 14)
+  theme_bw(base_size = 18) +
+  scale_fill_manual(values=c("#E41A1C","#FB9A99", "#377EB8", "#4DAF4A", "#984EA3", "#FF7F00"))
 ```
 
 ###Agreement Between Methods
@@ -127,7 +138,7 @@ temp_anno <- unique(unlist(pa_tables[['panaroo_sensitive']]))
 temp_anno <- temp_anno[temp_anno!=""]
 all_annotations <- all_annotations[all_annotations %in% temp_anno]
 
-temp_anno <- unique(unlist(pa_tables[['panaroo_merge']]))
+temp_anno <- unique(unlist(pa_tables[['cog']]))
 temp_anno <- temp_anno[temp_anno!=""]
 all_annotations <- all_annotations[all_annotations %in% temp_anno]
 
@@ -181,8 +192,277 @@ ggplot(data = plotdf, aes(x=Var1, y=Var2, fill=`Rand Index`)) +
 ```
 
 
+It is difficult to come up with a sensible metric for comparing methods on such a complicated dataset. One imperfect solution is to compare the number of clusters which contain genes with conflicting annotations.
+We exlude genes that have been called as fragments of a larger gene as well as hypothetical proteins as these are more likely to be the result of annotation errors and are hard to sensibly compare. We then count the number of conflicting annotation in each cluster using a script included with Panaroo. It should be noted that this approach may pick up small annotation differences that aren't nesescarily clustering issues. However, overall this can give some idea whether certain methods are overclustering the genes.
 
 
+First run the script
+
+```
+python ~/panaroo/scripts/count_annotation_conflicts.py -g ./panaroo_out/gene_data.csv -p ./klebsiella_pa_files/panaroo_strict_gene_presence_absence_redone.csv --method panaroo
+python ~/panaroo/scripts/count_annotation_conflicts.py -g ./panaroo_out/gene_data.csv -p ./klebsiella_pa_files/pirate_gene_presence_absence.csv --method pirate
+python ~/panaroo/scripts/count_annotation_conflicts.py -g ./panaroo_out/gene_data.csv -p ./klebsiella_pa_files/panx_gene_presence_absence.csv --method panx
+python ~/panaroo/scripts/count_annotation_conflicts.py -g ./panaroo_out/gene_data.csv -p ./klebsiella_pa_files/roary_gene_presence_absence.csv --method roary
+python ~/panaroo/scripts/count_annotation_conflicts.py -g ./panaroo_out/gene_data.csv -p ./klebsiella_pa_files/cogsoft_gene_presence_absence.csv --method cogsoft
+```
+
+Now plot the results. We copy the output by hand here.
+
+```{r}
+conflict_anno <- tibble(method=c("Panaroo","Panaroo (sensitive)", "PanX", "PIRATE", "Roary", "COGsoft"),
+                        count=c(45,45,67,90,82,157))
+
+conflict_anno$method <- factor(conflict_anno$method, levels = c("Panaroo","Panaroo (sensitive)", "PanX", "PIRATE", "Roary", "COGsoft"))
+ggplot(conflict_anno, aes(x=method, y=count, fill=method)) +
+  geom_col() +
+  theme_bw(base_size = 18) +
+  ylab("Conflicting Annotation Count") +
+  scale_fill_manual(values=c("#E41A1C","#FB9A99", "#377EB8", "#4DAF4A", "#984EA3", "#FF7F00"))
+```
+
+We can also look at a couple of trickier examples to get an idea of how each method handles them.
+
+First we take any cluster or gene that is linked to "EGEKHPPH_03354" which is most consistently annotated as 'crotonobetaine/carnitine-CoA ligase'. This is just one trickier example I selected for closer inspection.
+
+First get a list of all genes involved
+
+```{r, eval=FALSE}
+# first get rows associated with the target
+genes <- unlist(map(pa_tables, ~ unlist(.x[which(rowSums(.x=="EGEKHPPH_03354")>0),])))
+genes <- unique(genes[genes!=""])
+
+# now add genes in rows associated with those rows.
+genes <- unlist(map(genes, function(g) unique(unlist(map(pa_tables, ~ unlist(.x[which(rowSums(.x==g)>0),]))))))
+genes <- unique(unlist(str_split(unique(genes), "[;:]")))
+genes <- unique(gsub("[()]", "", genes))
+
+# for each gene genrate a binary outcome for being found with/without the centroid gene
+is_in <- do.call(cbind, map(pa_tables, function(pa) map_lgl(genes, ~ .x %in% pa[which(rowSums(pa=="EGEKHPPH_03354")>0),])))
+
+outtable <- cbind(genes, is_in)
+outtable <- outtable[outtable[,1]!="",]
+write.csv(outtable, file = "klebsiella_pa_files/EGEKHPPH_03354_pa.csv", quote = FALSE, col.names = TRUE, row.names = FALSE)
+```
+
+We use this list to generate a MSA using python, bash and MAFFT.
+
+```{python, eval=FALSE}
+genes = set(['BLIADDJL_02275','HKAMNNIE_04207','JIMHPKFH_03837','AOMCCKAJ_04206','DDAEKOIA_04666','GIBDEJGH_05261','OEAHODGD_00605','FBNNEDFL_03002','BPEFLPNN_03717','FOLCJMAC_03766','NBALKPJC_03170','MKPAIOMO_03535','ILAAFBJJ_04680','AKGJPILL_04008','DJGCGFNN_00649','HPCJGAHE_05150','JHABCCEE_05075','MCGNODNB_04349','LNFPPLKA_05107','DHJPEPJF_02985','MDCAGHGJ_00257','PDMPMOEH_04800','','KFIOGGAB_01785','JGFEPBDE_02910','BNEGIOFI_03414','AOGOPCMH_01434','GJGLCFAO_05298','CMJPCFDL_04524','ILDGAAPG_01547','ENAPNEFI_01105','HOJMNMAL_01890','AJIIOGAI_01287','OGNEABEE_00488','NKCPPPOI_02708','JMONEBNC_03164','CBCADEDL_01295','FFCOEOHO_00671','HAIFBDOH_03026','CNDDKKDK_01085','CGCLLCMO_05164','PAKMPBGM_04392','FIEOJJFB_03847','ALIHNGNC_04836','MAHDMLFK_04890','EMLJKJMF_04705','PPNCGJCJ_04346','EMNKFBDA_01170','NALFBGJE_03758','DCADFKON_04653','ACMLLLMG_01600','EICMKKAB_01899','KFGJNBPG_03255','JPPOHJAN_05116','PEFIOLCF_04113','IKCOHLNA_04900','ALFCDJGA_04938','POBLOJBP_05437','HFKIIOHA_02295','HHHPKLDM_04803','MAAKNFGI_01911','PAMKKCDO_05018','EAKINOIB_04266','EIGFAOCB_03730','GPACKGOK_04137','APNNDKAL_05194','CEMOMJPN_04915','MMPLNHOC_02699','PKCIBKII_03201','PACKLOLK_04787','HBEIADDC_02948','ODLCBFAL_02402','JPLOIOGN_01029','NNCHLEOD_05112','INFPFCGE_01342','GNGDDAIF_00851','ECHNOMEK_01597','CAGJNEIA_04680','NJAAJKJA_05348','MBLCGNJA_03933','DHGKKBIJ_04886','DCMCHNCH_00666','KCFKDDPO_04739','HBNMADGG_04953','PIMKEAGC_01627','ILDMPJJF_04882','DLHFOGND_04266','AHIKKBJF_05064','JGOJCHHP_05000','BNNFCJDG_03596','FEIFONLG_04499','DLICPGHM_05032','PPHDDNLI_00531','GNMAMBFN_05134','MNNOIGOP_02518','PEDJOJGP_01350','CNIEKNAI_03812','AKKCFLDB_03574','FKLLCIKP_00215','MHPGDIGD_04353','FGIHKDBE_01606','MMIGMJEO_02924','PKCMIDDC_04281','LLOPFMIA_00992','MOLGLLGN_01280','CMALKGEE_02649','JMPGAFMA_02144','LOJEIGOF_04458','GKFAMBLJ_03798','EHLIBNLI_03103','BLHJFOEP_04117','HFEJPIEE_01716','HGJCJHNL_04238','EPEODNLN_03924','CGAIOHOI_02687','JNPIPOAJ_00200','MHGIHCEB_03832','FFHEGANC_03650','MBPCNGAM_02835','PDJEFONO_04954','IIMJLGKH_00810','LHFOCOKJ_02630','ODAAEODD_04048','OHFDNAHM_02623','LMLMECGJ_04519','FGGOHEAC_00218','FBFHPNLF_02254','PGCIPBHI_04286','FOEGGEAC_03039','DNHMAGKA_04934','MCAFBMFF_05003','KDJNOHOH_04560','KBMHKIEM_04888','LDPGPIJA_01908','LBJBIDEJ_04927','HFKIIAGP_04614','KMJFAHHH_03317','DLBLDKIJ_03683','HMJNIDCC_02663','LEIJEFKP_01593','MFNKMPAM_02026','BAMHCAME_02962','CAFAJEPH_03897','AIDFMLNP_03864','ECJFIBNB_03311','JGJMBNEK_04178','GCFPCKHP_03091','NDPMMGBI_04757','CDCEHFGC_03781','MLKBEPLK_01220','CJFFOHAO_03781','GDFNPJKD_03417','FENLIFPN_03787','GPHMKBKC_03768','BEHKDFBL_04851','LNPOPIPF_03163','IFPDIJNH_04138','IGOGDGOA_03653','BFFFBEKE_02897','MIFHILDP_00377','PDEDMGPD_03953','IIKLHBBD_03485','HEHNFIEG_04095','JODHPGGM_03160','KIKMJPAP_02006','CHLEAICA_03543','MCMNCFNH_04974','IPGNFAMM_03974','OJFONEFE_02852','CPFPLKLM_01089','ILDBFKKF_01448','MLJDNLLD_01350','IMGDPOBN_00835','EHMCBADO_04735','AEHBFAPC_04957','NBAGIKNE_04786','FIMDDPAE_04972','HHCNOMOF_03453','FOILALFG_04914','CBNBDEKD_03454','EGGCBBJP_03449','CHGKJLKP_02994','EJJBJLNA_00964','IDPGEAOI_00578','HAJJLEIN_04320','MFFEMMHI_01471','GLGBDILJ_03422','LKPEOILP_05580','JPDAEMJH_05434','HFDNAOLN_05064','HJOBFDCO_04546','HJOBFDCO_04545','FEMCEJGN_05499','NFPLLLIB_03027','BHJEDKBF_05297','MIJDJFOI_04307','DGEBHCBB_05360','GHBFKOKL_05295','IJODNBMD_05521','DJPFCFMD_04307','HMIKBBDF_05416','BGLJCGEP_04489','HNIOAKBO_00374','FMEGIGHO_04799','FMEGIGHO_00614','NMPKMPNM_02470','GFBGDJHB_05091','BDMAJJCI_05301','NLKOGHBO_04924','BFDFNMAI_04828','BFDFNMAI_04827','AMPEBOID_05153','HGOIIGDC_04518','GDDIMEOF_04945','AJBMBHGB_04787','IJAAPAFL_04202','LPFMOLNC_05228','KKAGLBML_05349','AIINIPAH_03895','GMPGEAAC_04911','NKFOMIGP_05323','LLOJMOCI_05214','FAPHKOEP_04905','DPNFLAPC_04405','EKENHPDP_04769','NNHDGMCP_00057','OHCKPMKE_04798','FAGJOMKD_05011','LNOJILEH_05067','LNOJILEH_05068','NEDPJPIG_05072','KFMJDIAC_05124','GLCLDGNF_04996','CINLLEGC_02776','OEFPCOAF_05329','OEFPCOAF_02242','BOPIEMCD_04863','PPJHPCJK_05064','GLBFKCFA_03563','GLBFKCFA_03564','BIDGGFEG_04444','BIDGGFEG_04445','NIDGGJLL_05039','NIDGGJLL_05040','EEDMPDLB_02829','FEHCLKIG_01696','DNGHDJHL_04660','KEAACCIK_05314','LAFDFEKJ_02089','KHNPOKNE_04964','BFIPIBFD_02588','HOFOBAGB_04436','FCIECHGP_04770','FCIECHGP_04771','PMEGGNDC_01869','LEJHAAAP_04663','PCNBLMKD_04960','DEHOHPIP_04484','LBHCMNPC_02244','KOAILEED_01359','GMMKEPEF_03084','GMMKEPEF_03085','NJHLNCFD_01255','EBJBKJPC_03299','OBOFFKJP_01760','OBOFFKJP_01759','GANEBHNN_02734','AEJAMGBJ_04585','FMHOMKLA_04888','JCIHFHBB_02821','PDHINEDK_03394','FAMLPOHJ_04036','MOOPCBGB_00313','FPOPEOBJ_02073','HINBENMJ_03926','OCADADBM_01034','LEOFLMDA_00193','DIBGMLIL_04333','IDKJIBFA_04853','ABKIGFEM_03363','IENNIAEH_04216','KCCKIDPK_04442','MCCBNMDM_02482','PGLCGBHE_00971','FIKNJMIL_00602','ELLIMNIF_02643','DMAHHBKC_00566','BEJEIACC_03270','KICOGNBF_03550','HJCAAAAL_02524','PCKJBFPB_03715','MHBMGKGF_03397','GACEEEAN_02594','EGEKHPPH_03354','CLNFAHOL_03348','JAAJOMDF_03696','GPLELKNM_03741','IEKEKMED_03842','EFJGEALO_03337','HHGKAPAN_02583','KNKLCFIP_02655','GMINOEHK_03762','KPHOFCDF_00065','KPOIAHFD_00064','OLPAEAFJ_02724','NKMKOHOB_00375','LFLMDOGK_04815','HBGICMEK_04560','HBGICMEK_04561','LFDFGGNM_03648','ADCANDME_00670','IGCBFHDK_04836','FOHJBLJH_03649','KAILDODD_00001','MJLPJJDP_05240','JLDIOFAI_05261','DBDDMCCB_05046','LNBGOKMO_04416','MGBABOJF_05274','NFPLLLIB_01325','BMANODNA_04718','BHJEDKBF_05260','MIJDJFOI_01188','BPAPPDLG_05054','BDMAJJCI_05406','NLKOGHBO_05218','HGOIIGDC_04517','AJBMBHGB_05446','LGLBPKJJ_04884','LIDJBJFH_03636','BPKAMOIJ_04912','HHBHKLFP_05372','HHBHKLFP_05385','GLCLDGNF_05211','GLCLDGNF_05212','BOPIEMCD_05334','KEAACCIK_05315','OHAGMEMK_04936','OHAGMEMK_05327','DEHOHPIP_05101','JNJKFODN_05144','DDBMEDAI_05599','209_refound_18115','287_refound_27274','0_173_refound_3835','0_246_refound_7373'])
+
+with open("gene_data.csv", 'r') as infile, \
+  open("EGEKHPPH_03354.fasta", 'w') as outfile:
+  next(infile)
+  for line in infile:
+    line=line.split(",")
+    if line[3] in genes:
+      outfile.write(">" + line[3] + "\n" +
+        line[4] + "\n")
+```
+
+
+```
+mafft EGEKHPPH_03354.fasta > EGEKHPPH_03354_MSA.fasta
+```
+
+```{r}
+msa <-  do.call(rbind, seqinr::read.fasta("./klebsiella_pa_files/EGEKHPPH_03354_MSA.fasta", 
+                                          seqtype = "AA", as.string = TRUE))
+method_pa <- fread("./klebsiella_pa_files/EGEKHPPH_03354_pa.csv", data.table = FALSE)
+method_pa <- method_pa[match(rownames(msa), method_pa$genes),]
+
+method_pa[(method_pa$panaroo==TRUE) & (method_pa$pirate==FALSE),]
+method_pa[(method_pa$panaroo==FALSE) & (method_pa$pirate==TRUE),]
+msa[method_pa$panaroo!=method_pa$pirate,]
+
+RWebLogo::weblogo(msa[(method_pa$panaroo==TRUE) & (method_pa$pirate==TRUE),], composition="none", scale.width=FALSE, stacks.per.line = 1000, size = "small",
+                  units="probability", file.out = "./Figures/EGEKHPPH_03354_panarooT_pirateT.pdf", format = "pdf")
+RWebLogo::weblogo(msa[(method_pa$panaroo==FALSE) & (method_pa$pirate==TRUE),], composition="none", scale.width=FALSE, stacks.per.line = 1000, size = "small",
+                  units="probability", file.out = "./Figures/EGEKHPPH_03354_panarooF_pirateT.pdf", format = "pdf")
+RWebLogo::weblogo(msa[(method_pa$panaroo==TRUE) & (method_pa$pirate==FALSE),], composition="none", scale.width=FALSE, stacks.per.line = 1000, size = "small",
+                  units="probability", file.out = "./Figures/EGEKHPPH_03354_panarooT_pirateF.pdf", format = "pdf")
+
+RWebLogo::weblogo(msa[(method_pa$panaroo==TRUE) & (method_pa$panx==TRUE),], composition="none", scale.width=FALSE, stacks.per.line = 1000, size = "small",
+                  units="probability", file.out = "./Figures/EGEKHPPH_03354_panarooT_panxT.pdf", format = "pdf")
+RWebLogo::weblogo(msa[(method_pa$panaroo==FALSE) & (method_pa$panx==TRUE),], composition="none", scale.width=FALSE, stacks.per.line = 1000, size = "small",
+                  units="probability", file.out = "./Figures/EGEKHPPH_03354_panarooF_panxT.pdf", format = "pdf")
+RWebLogo::weblogo(msa[(method_pa$panaroo==TRUE) & (method_pa$panx==FALSE),], composition="none", scale.width=FALSE, stacks.per.line = 1000, size = "small",
+                  units="probability", file.out = "./Figures/EGEKHPPH_03354_panarooT_panxF.pdf", format = "pdf")
+
+RWebLogo::weblogo(msa[(method_pa$panaroo==TRUE) & (method_pa$roary==TRUE),], composition="none", scale.width=FALSE, stacks.per.line = 1000, size = "small",
+                  units="probability", file.out = "./Figures/EGEKHPPH_03354_panarooT_roaryT.pdf", format = "pdf")
+RWebLogo::weblogo(msa[(method_pa$panaroo==FALSE) & (method_pa$roary==TRUE),], composition="none", scale.width=FALSE, stacks.per.line = 1000, size = "small",
+                  units="probability", file.out = "./Figures/EGEKHPPH_03354_panarooF_roaryT.pdf", format = "pdf")
+RWebLogo::weblogo(msa[(method_pa$panaroo==TRUE) & (method_pa$roary==FALSE),], composition="none", scale.width=FALSE, stacks.per.line = 1000, size = "small",
+                  units="probability", file.out = "./Figures/EGEKHPPH_03354_panarooT_roaryF.pdf", format = "pdf")
+
+# RWebLogo::weblogo(msa[method_pa$panaroo==method_pa$cogsoft,], composition="none", scale.width=FALSE, stacks.per.line = 1000, size = "small",
+#                   units="probability", file.out = "./Figures/EGEKHPPH_03354_panarooT_cogT.pdf", format = "pdf")
+# RWebLogo::weblogo(msa[(method_pa$panaroo==FALSE) & (method_pa$cogsoft==TRUE),], composition="none", scale.width=FALSE, stacks.per.line = 1000, size = "small",
+#                   units="probability", file.out = "./Figures/EGEKHPPH_03354_panarooF_cogT.pdf", format = "pdf")
+# RWebLogo::weblogo(msa[(method_pa$panaroo==TRUE) & (method_pa$cogsoft==FALSE),], composition="none", scale.width=FALSE, stacks.per.line = 1000, size = "small",
+#                   units="probability", file.out = "./Figures/EGEKHPPH_03354_panarooT_cogF.pdf", format = "pdf")
+```
+
+We can also look at "PDHINEDK_04333" which is less conserved and most consistently annotated as a 'transcriptional regulator'.
+
+```{r, eval=FALSE}
+# first get rows associated with the target
+genes <- unlist(map(pa_tables, ~ unlist(.x[which(rowSums(.x=="PDHINEDK_04333")>0),])))
+genes <- unique(genes[genes!=""])
+
+# now add genes in rows associated with those rows.
+genes <- unlist(map(genes, function(g) unique(unlist(map(pa_tables, ~ unlist(.x[which(rowSums(.x==g)>0),]))))))
+genes <- unique(unlist(str_split(unique(genes), "[;:]")))
+genes <- unique(gsub("[()]", "", genes))
+
+# for each gene genrate a binary outcome for being found with/without the centroid gene
+is_in <- do.call(cbind, map(pa_tables, function(pa) map_lgl(genes, ~ .x %in% pa[which(rowSums(pa=="PDHINEDK_04333")>0),])))
+
+outtable <- cbind(genes, is_in)
+outtable <- outtable[outtable[,1]!="",]
+write.csv(outtable, file = "klebsiella_pa_files/PDHINEDK_04333_pa.csv", quote = FALSE, row.names = FALSE)
+```
+
+```{python, eval=FALSE}
+genes = set(['FBNNEDFL_04560','AKGJPILL_04330','MDCAGHGJ_04733','KFIOGGAB_03125','JGFEPBDE_02632','CMJPCFDL_01003','AJIIOGAI_00991','NKCPPPOI_00877','CNDDKKDK_02962','PAKMPBGM_00831','EMLJKJMF_04052','PEFIOLCF_00949','JLDIOFAI_04140','HHHPKLDM_01101','GPACKGOK_04048','APNNDKAL_02393','CEMOMJPN_03598','MMPLNHOC_03355','PKCIBKII_03483','JPLOIOGN_00025','GNGDDAIF_00461','ECHNOMEK_00291','CAGJNEIA_02194','MBLCGNJA_04625','BNNFCJDG_04761','GNMAMBFN_04771','PEDJOJGP_04644','MMIGMJEO_04043','PKCMIDDC_01051','LLOPFMIA_04709','GKFAMBLJ_04201','LHFOCOKJ_03172','MCAFBMFF_04546','ECJFIBNB_00755','CHLEAICA_01884','EHMCBADO_04650','FOILALFG_00032','LNBGOKMO_00840','LKPEOILP_03269','BHJEDKBF_01348','MIJDJFOI_02327','DGEBHCBB_03804','HNIOAKBO_00932','GMPGEAAC_00059','NKFOMIGP_04029','FAPHKOEP_03377','DPNFLAPC_02528','EKENHPDP_03837','NEDPJPIG_03454','CINLLEGC_03368','OEFPCOAF_03439','PPJHPCJK_04406','GLBFKCFA_04023','DNGHDJHL_02871','LAFDFEKJ_03357','NJHLNCFD_01136','GANEBHNN_03901','AEJAMGBJ_03399','FMHOMKLA_03599','PDHINEDK_04333','DHJPEPJF_03747','MDCAGHGJ_04635','PDMPMOEH_03367','KFIOGGAB_04582','CNDDKKDK_04492','ALIHNGNC_03772','MAHDMLFK_03598','PPNCGJCJ_03750','GPACKGOK_03337','APNNDKAL_02646','INFPFCGE_00087','NJAAJKJA_04086','MBLCGNJA_03828','DHGKKBIJ_00004','DLHFOGND_03200','JGOJCHHP_01778','BNNFCJDG_03807','FEIFONLG_02516','CNIEKNAI_00328','CNIEKNAI_00332','MOLGLLGN_03496','OHFDNAHM_04698','JGJMBNEK_00252','JGJMBNEK_00256','CDCEHFGC_00697','CDCEHFGC_00701','CJFFOHAO_01579','CJFFOHAO_01583','FENLIFPN_01287','FENLIFPN_01291','GPHMKBKC_01031','GPHMKBKC_01035','OJFONEFE_00120','OJFONEFE_00124','MLJDNLLD_03867','IMGDPOBN_05085','NBAGIKNE_01437','NBAGIKNE_01441','FIMDDPAE_03061','MFFEMMHI_02606','MFFEMMHI_02610','HJOBFDCO_00391','HJOBFDCO_00396','HGOIIGDC_02117','KKAGLBML_00063','KKAGLBML_00067','AIINIPAH_01698','NNHDGMCP_01527','KFMJDIAC_00335','CINLLEGC_02904','OEFPCOAF_03047','PPJHPCJK_02419','GLBFKCFA_03447','BIDGGFEG_00080','NIDGGJLL_00878','LAFDFEKJ_03213','KHNPOKNE_00183','PMEGGNDC_01230','KOAILEED_01900','OBOFFKJP_00714','GANEBHNN_00560','FPOPEOBJ_03531','DDBMEDAI_00284','DDBMEDAI_00288','FIKNJMIL_00988','FIKNJMIL_00992','ELLIMNIF_05254','ELLIMNIF_05258','DMAHHBKC_05270','DMAHHBKC_05274','BEJEIACC_05243','BEJEIACC_05247','KICOGNBF_04851','KICOGNBF_04855','HJCAAAAL_05283','HJCAAAAL_05287','PCKJBFPB_01381','PCKJBFPB_01385','MHBMGKGF_05270','MHBMGKGF_05274','GACEEEAN_00638','GACEEEAN_00642','EGEKHPPH_02915','EGEKHPPH_02919','CLNFAHOL_01088','CLNFAHOL_01092','JAAJOMDF_01086','JAAJOMDF_01090','GPLELKNM_01396','GPLELKNM_01400','IEKEKMED_05248','IEKEKMED_05252','EFJGEALO_05294','EFJGEALO_05298','HHGKAPAN_00749','HHGKAPAN_00753','KNKLCFIP_00712','KNKLCFIP_00716','GMINOEHK_05085','GMINOEHK_05089','LFLMDOGK_04163','HBGICMEK_01221','HBGICMEK_02155','LFDFGGNM_00804','LFDFGGNM_00808','ADCANDME_01885','IGCBFHDK_03794','FOHJBLJH_01221','FOHJBLJH_01225'])
+
+with open("gene_data.csv", 'r') as infile, \
+  open("PDHINEDK_04333.fasta", 'w') as outfile:
+  next(infile)
+  for line in infile:
+    line=line.split(",")
+    if line[3] in genes:
+      outfile.write(">" + line[3] + "\n" +
+        line[4] + "\n")
+```
+
+```{r}
+msa <-  do.call(rbind, seqinr::read.fasta("./klebsiella_pa_files/PDHINEDK_04333_MSA.fasta", 
+                                          seqtype = "AA", as.string = TRUE))
+method_pa <- fread("./klebsiella_pa_files/PDHINEDK_04333_pa.csv", data.table = FALSE)
+method_pa <- method_pa[match(rownames(msa), method_pa$genes),]
+
+method_pa[(method_pa$panaroo==TRUE) & (method_pa$pirate==FALSE),]
+method_pa[(method_pa$panaroo==FALSE) & (method_pa$pirate==TRUE),]
+msa[method_pa$panaroo!=method_pa$pirate,]
+
+RWebLogo::weblogo(msa[(method_pa$panaroo==TRUE) & (method_pa$pirate==TRUE),], composition="none", scale.width=FALSE, stacks.per.line = 1000, size = "small",
+                  units="probability", file.out = "./Figures/PDHINEDK_04333_panarooT_pirateT.pdf", format = "pdf")
+RWebLogo::weblogo(msa[(method_pa$panaroo==FALSE) & (method_pa$pirate==TRUE),], composition="none", scale.width=FALSE, stacks.per.line = 1000, size = "small",
+                  units="probability", file.out = "./Figures/PDHINEDK_04333_panarooF_pirateT.pdf", format = "pdf")
+RWebLogo::weblogo(msa[(method_pa$panaroo==TRUE) & (method_pa$pirate==FALSE),], composition="none", scale.width=FALSE, stacks.per.line = 1000, size = "small",
+                  units="probability", file.out = "./Figures/PDHINEDK_04333_panarooT_pirateF.pdf", format = "pdf")
+
+RWebLogo::weblogo(msa[(method_pa$panaroo==TRUE) & (method_pa$panx==TRUE),], composition="none", scale.width=FALSE, stacks.per.line = 1000, size = "small",
+                  units="probability", file.out = "./Figures/PDHINEDK_04333_panarooT_panxT.pdf", format = "pdf")
+RWebLogo::weblogo(msa[(method_pa$panaroo==FALSE) & (method_pa$panx==TRUE),], composition="none", scale.width=FALSE, stacks.per.line = 1000, size = "small",
+                  units="probability", file.out = "./Figures/PDHINEDK_04333_panarooF_panxT.pdf", format = "pdf")
+RWebLogo::weblogo(msa[(method_pa$panaroo==TRUE) & (method_pa$panx==FALSE),], composition="none", scale.width=FALSE, stacks.per.line = 1000, size = "small",
+                  units="probability", file.out = "./Figures/PDHINEDK_04333_panarooT_panxF.pdf", format = "pdf")
+
+RWebLogo::weblogo(msa[(method_pa$panaroo==TRUE) & (method_pa$roary==TRUE),], composition="none", scale.width=FALSE, stacks.per.line = 1000, size = "small",
+                  units="probability", file.out = "./Figures/PDHINEDK_04333_panarooT_roaryT.pdf", format = "pdf")
+RWebLogo::weblogo(msa[(method_pa$panaroo==FALSE) & (method_pa$roary==TRUE),], composition="none", scale.width=FALSE, stacks.per.line = 1000, size = "small",
+                  units="probability", file.out = "./Figures/PDHINEDK_04333_panarooF_roaryT.pdf", format = "pdf")
+RWebLogo::weblogo(msa[(method_pa$panaroo==TRUE) & (method_pa$roary==FALSE),], composition="none", scale.width=FALSE, stacks.per.line = 1000, size = "small",
+                  units="probability", file.out = "./Figures/PDHINEDK_04333_panarooT_roaryF.pdf", format = "pdf")
+
+# RWebLogo::weblogo(msa[method_pa$panaroo==method_pa$cogsoft,], composition="none", scale.width=FALSE, stacks.per.line = 1000, size = "small",
+#                   units="probability", file.out = "./Figures/EGEKHPPH_03354_panarooT_cogT.pdf", format = "pdf")
+# RWebLogo::weblogo(msa[(method_pa$panaroo==FALSE) & (method_pa$cogsoft==TRUE),], composition="none", scale.width=FALSE, stacks.per.line = 1000, size = "small",
+#                   units="probability", file.out = "./Figures/EGEKHPPH_03354_panarooF_cogT.pdf", format = "pdf")
+# RWebLogo::weblogo(msa[(method_pa$panaroo==TRUE) & (method_pa$cogsoft==FALSE),], composition="none", scale.width=FALSE, stacks.per.line = 1000, size = "small",
+#                   units="probability", file.out = "./Figures/EGEKHPPH_03354_panarooT_cogF.pdf", format = "pdf")
+```
+
+
+
+
+
+
+We can investigate differences in the core genome calls between the methods.
+
+```{r, eval=FALSE}
+core_panaroo <- pa_tables[["panaroo"]][rowSums(pa_tables[["panaroo"]]!="")>(0.95*ncol(pa_tables[["panaroo"]])),]
+core_pirate <-  pa_tables[["panx"]][rowSums(pa_tables[["panx"]]!="")>(0.95*ncol(pa_tables[["panx"]])),]
+
+all(colnames(core_panaroo) %in% colnames(core_pirate))
+all(colnames(core_pirate) %in% colnames(core_panaroo))
+
+
+core_pirate <- core_pirate[,match(colnames(core_panaroo), colnames(core_pirate))]
+
+pa_tables[["pirate"]]  <- pa_tables[["pirate"]][,match(colnames(core_panaroo), colnames(pa_tables[["pirate"]]))]
+all(colnames(core_panaroo) == colnames(core_pirate))
+
+core_pirate[core_pirate==""] <- NA
+core_panaroo[core_panaroo==""] <- NA
+
+hits <- apply(core_pirate, 1, function(r){
+  n_matches <- rowSums(t(t(pa_tables[["panaroo"]])==r), na.rm = TRUE)
+  return(which(n_matches>0))
+})
+
+core_panaroo_index <- which(rowSums(pa_tables[["panaroo"]]!="")>(0.95*ncol(pa_tables[["panaroo"]])))
+diff <- map(hits, ~ all(.x %in% core_panaroo_index))
+diff <- hits[!unlist(diff)]
+
+bad <- imap_lgl(diff, ~ (length(.x)==1) & sum(core_pirate[as.numeric(.y),]!=pa_tables[["panaroo"]][.x[[1]],], na.rm = TRUE)>5)
+diff[bad]
+
+
+length(diff)
+core_pirate[is.na(core_pirate)] <- ""
+pirate[3581,]
+sum(core_pirate[158,]==pa_tables[["panaroo"]][5154,], na.rm = TRUE)
+sum(core_pirate[158,]!=pa_tables[["panaroo"]][5154,], na.rm = TRUE)
+
+d <- apply(pa_tables[["panaroo"]], 1, function(r) sum(r==core_pirate[158,], na.rm = TRUE))
+which(d>0)
+
+pa_tables[["panaroo"]][5154,]
+
+rbind(core_pirate[158,], pa_tables[["panaroo"]][5154,])[,core_pirate[158,]!=pa_tables[["panaroo"]][5154,]]
+rbind(core_pirate[158,], pa_tables[["panaroo"]][5154,])[,core_pirate[158,]==pa_tables[["panaroo"]][5154,]]
+which(rowSums(t(t(pa_tables[["pirate"]])==core_pirate[3693,]), na.rm = TRUE)>0)
+d <- apply(pa_tables[["pirate"]], 1, function(r) sum(r==core_pirate[2618,], na.rm = TRUE))
+
+which(rowSums(pa_tables[["panaroo"]]=="KAILDODD_04989")>0)
+which(apply(pa_tables[["panaroo"]], 1, function(x) sum(grepl(".*KAILDODD_04989.*", x)))>0)
+
+pa_tables[["panaroo"]][1372,]
+
+pa_tables[["panaroo"]][1372,grepl(".*KAILDODD_04989.*", pa_tables[["panaroo"]][1372,])]
+
+low <- which(pirate$threshold==70)
+low <- low[100:length(low)]
+low[1:70]
+pirate[5154,]
+
+all_pirate <- pirate[]
+
+rbind(pa_tables[["pirate"]][5154,],
+      pa_tables[["panaroo"]][158])[,pa_tables[["pirate"]][5154,]!=pa_tables[["panaroo"]][158,]]
+rbind(pa_tables[["pirate"]][5154,],
+      pa_tables[["panaroo"]][158,])[,pa_tables[["pirate"]][5154,]==pa_tables[["panaroo"]][158,]]
+
+
+
+d <- apply(pa_tables[["panaroo"]], 1, function(r) sum(any(core_pirate[2618,], r), na.rm = TRUE))
+
+d <- apply(pa_tables[["panaroo_sensitive"]], 1, function(r) sum(r==core_pirate[2618,], na.rm = TRUE))
+
+
+
+paste(pa_tables[["pirate"]][3369,], collapse = " ")
+pirate[3369,]
+pa_tables[["panaroo"]][5747,]
+
+```
+
+```{r}
+
+```
 
 
 

@@ -60,11 +60,18 @@ cpu_mem_df$db_label <- paste(cpu_mem_df$db_size, "isolates")
 ###Plot CPU usage
 
 ```{r}
+cpu_mem_df$method[cpu_mem_df$method=="panaroo"] <- "Panaroo"
+cpu_mem_df$method[cpu_mem_df$method=="panx"] <- "PanX"
+cpu_mem_df$method[cpu_mem_df$method=="pirate"] <- "PIRATE"
+cpu_mem_df$method[cpu_mem_df$method=="roary"] <- "Roary"
+cpu_mem_df$method[cpu_mem_df$method=="cogsoft"] <- "COGsoft"
+cpu_mem_df$method <- factor(cpu_mem_df$method, levels = c("Panaroo", "PanX", "PIRATE", "Roary", "COGsoft"))
+
 ggplot(cpu_mem_df, aes(x=method, y=cpu_time)) + 
   geom_col() +
   facet_wrap(~db_label, nrow = 1) +
   scale_y_log10() +
-  theme_bw(base_size = 14) +
+  theme_bw(base_size = 18) +
   ylab("cpu time (seconds)")
 ```
 
@@ -75,7 +82,7 @@ ggplot(cpu_mem_df, aes(x=method, y=memory)) +
   geom_col() +
   facet_wrap(~db_label, nrow = 1) +
   scale_y_log10() +
-  theme_bw(base_size = 14) +
+  theme_bw(base_size = 18) +
   ylab("memory (Mb)")
 ```
 

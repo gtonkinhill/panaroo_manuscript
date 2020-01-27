@@ -61,6 +61,10 @@ names(panx_pa) <- map_chr(panx_inferred_pa_files, ~ tools::file_path_sans_ext(ba
 panaroo_inferred_pa_files <- Sys.glob("./simulated_data/realistic_sims/panaroo_pa_files/*.csv")
 panaroo_pa <- map(panaroo_inferred_pa_files, ~ fread(.x, data.table = FALSE))
 names(panaroo_pa) <- map_chr(panaroo_inferred_pa_files, ~ tools::file_path_sans_ext(basename(.x)))
+
+cog_inferred_pa_files <- Sys.glob("./simulated_data/realistic_sims/cog_pa_files/*.csv")
+cog_pa <- map(cog_inferred_pa_files, ~ fread(.x, data.table = FALSE))
+names(cog_pa) <- map_chr(cog_inferred_pa_files, ~ tools::file_path_sans_ext(basename(.x)))
 ```
 
 ```{r}
@@ -204,6 +208,36 @@ pirate_pa <- imap(pirate_pa, function(pa, fname){
 })
 saveRDS(pirate_pa, file = "pirate_pa.RDS")
 
+
+# format COGsoft
+cog_pa <- imap(cog_pa, function(pa, fname){
+  print(fname)
+  temp <- pa
+
+  # set up mapping vectors
+  if (grepl(".*art_assem.*", fname)){
+    keep <- cf_assem_mapping$folder==gsub(".*_pa_", "", fname)
+    lookup <- cf_assem_mapping$annotation[keep]
+    names(lookup) <- paste(cf_assem_mapping$file[keep], cf_assem_mapping$id[keep], sep="_")
+  } else {
+    keep <- assem_mapping$folder==gsub(".*_pa_", "", fname)
+    lookup <- assem_mapping$annotation[keep]
+    names(lookup) <- paste(assem_mapping$file[keep], assem_mapping$id[keep], sep="_")
+  }
+  lookup[is.na(lookup)] <- "unannotated"
+  
+  pa <- do.call(cbind, map(1:ncol(temp), function(i){
+    lookup[paste(colnames(temp)[[i]], temp[,i], sep="_")]
+  }))
+  
+  colnames(pa) <- colnames(temp)
+  pa <- pa[,order(as.numeric(gsub(".*iso", "", gsub(".*iso_", "", colnames(pa)))))]
+  pa[is.na(pa)] <- ""
+  pa[pa=="unannotated"] <- NA
+  return(pa)
+})
+saveRDS(cog_pa, file = "cog_pa.RDS")
+
 # format original simulation matrix
 sim_pa <- map(sim_pa, function(pa){
   pa <- t(apply(pa, 1, function(r){
@@ -224,6 +258,7 @@ panaroo_pa <- readRDS(file = "panaroo_pa.RDS")
 roary_pa <- readRDS(file = "roary_pa.RDS")
 panx_pa <- readRDS(file = "panx_pa.RDS")
 pirate_pa <- readRDS(file = "pirate_pa.RDS")
+cog_pa <- readRDS(file = "cog_pa.RDS")
 sim_pa <- readRDS(file = "sim_pa.RDS")
 ```
 
@@ -233,8 +268,9 @@ Identical paralogs can cause issues in our simulation as we identify genes using
 ```{r}
 paralogs <- unique(c(unlist(map(roary_pa, ~ apply(.x, 2, function(pa){unique(pa[duplicated(pa)])}))),
                      unlist(map(panx_pa, ~ apply(.x, 2, function(pa){unique(pa[duplicated(pa)])}))),
-                       unlist(map(pirate_pa, ~ apply(.x, 2, function(pa){unique(pa[duplicated(pa)])}))),
-                         unlist(map(panaroo_pa, ~ apply(.x, 2, function(pa){unique(pa[duplicated(pa)])})))))
+                     unlist(map(pirate_pa, ~ apply(.x, 2, function(pa){unique(pa[duplicated(pa)])}))),
+                     unlist(map(cog_pa, ~ apply(.x, 2, function(pa){unique(pa[duplicated(pa)])}))),
+                     unlist(map(panaroo_pa, ~ apply(.x, 2, function(pa){unique(pa[duplicated(pa)])})))))
 paralogs <- paralogs[(!is.na(paralogs)) & (paralogs!="")]
 ```
 
@@ -370,38 +406,43 @@ assem_results_df <- map_dfr(1:length(panaroo_pa), function(i){
                         all_ids[((!(all_ids %in% c(roary_pa[[i]]))) & 
                                    (!(all_ids %in% c(pirate_pa[[i]]))) & 
                                    (!(all_ids %in% c(panx_pa[[i]]))) &
+                                   (!(all_ids %in% c(cog_pa[[i]]))) &
                                    (!(all_ids %in% c(panaroo_pa[[i]]))))])
   missing <- missing_from_all
   
   roary_error <- count_errors(current_sim_pa, roary_pa[[i]], missing = missing, paralogs = paralogs)
   panx_error <- count_errors(current_sim_pa, panx_pa[[i]], missing = missing, paralogs = paralogs)
   pirate_error <- count_errors(current_sim_pa, pirate_pa[[i]], missing = missing, paralogs = paralogs)
+  cog_error <- count_errors(current_sim_pa, cog_pa[[i]], missing = missing, paralogs = paralogs)
   panaroo_error <- count_errors(current_sim_pa, panaroo_pa[[i]], missing = missing, paralogs = paralogs)
 
   df <- data.frame(sim=current_sim,
              roary_error=roary_error$total_error,
              panx_error=panx_error$total_error,
              pirate_error=pirate_error$total_error,
+             cog_error=cog_error$total_error,
              panaroo_error=panaroo_error$total_error,
               
              sim_pg_size=nrow(current_sim_pa)-length(missing),
              roary_pg_size=roary_error$pg_size,
              panx_pg_size=panx_error$pg_size,
              pirate_pg_size=pirate_error$pg_size,
+             cog_pg_size=cog_error$pg_size,
              panaroo_pg_size=panaroo_error$pg_size,
              
              roary_missing=roary_error$missing,
              panx_missing=panx_error$missing,
              pirate_missing=pirate_error$missing,
+             cog_missing=cog_error$missing,
              panaroo_missing=panaroo_error$missing,
              
              roary_unanno=roary_error$unannotated,
              panx_unanno=panx_error$unannotated,
              pirate_unanno=pirate_error$unannotated,
+             cog_unanno=cog_error$unannotated,
              panaroo_unanno=panaroo_error$unannotated,
              
              stringsAsFactors = FALSE)
-  # print(df)
   return(df)
 })
 ```
@@ -422,11 +463,21 @@ plotdf$param_summary <- paste(paste(paste("Gain/Loss ratio: ", gr/lr, sep = ""),
                               mu, sep = "")
 plotdf$method <- gsub("_error", "", plotdf$method)
 
+plotdf$method[plotdf$method=="panaroo"] <- "Panaroo"
+plotdf$method[plotdf$method=="panx"] <- "PanX"
+plotdf$method[plotdf$method=="pirate"] <- "PIRATE"
+plotdf$method[plotdf$method=="roary"] <- "Roary"
+plotdf$method[plotdf$method=="cog"] <- "COGsoft"
+plotdf$method <- factor(plotdf$method, levels = c("Panaroo", "PanX", "PIRATE", "Roary", "COGsoft"))
+
 ggplot(plotdf[!grepl("contam|frag", plotdf$params),], aes(x=method, y=`error count`, col=method)) + 
   geom_point(size=2) +
   facet_wrap(~param_summary, nrow = 1)  +
   ylab("total error count") +
-  theme_bw(base_size = 14)
+  theme_bw(base_size = 14) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_colour_manual(values=c("#E41A1C", "#377EB8", "#4DAF4A", "#984EA3", "#FF7F00"))
+
 ```
 
 Now plot more difficult scenarios
@@ -443,13 +494,21 @@ plotdf$variable[plotdf$variable=="unanno"] <- "accessory inflation"
 plotdf$variable <- factor(plotdf$variable, 
                           levels = c("total errors","missing genes","accessory inflation"))
 
+plotdf$method[plotdf$method=="panaroo"] <- "Panaroo"
+plotdf$method[plotdf$method=="panx"] <- "PanX"
+plotdf$method[plotdf$method=="pirate"] <- "PIRATE"
+plotdf$method[plotdf$method=="roary"] <- "Roary"
+plotdf$method[plotdf$method=="cog"] <- "COGsoft"
+plotdf$method <- factor(plotdf$method, levels = c("Panaroo", "PanX", "PIRATE", "Roary", "COGsoft"))
+
 contam_gg <- ggplot(plotdf[grepl("contam", plotdf$params),], aes(x=method, y=value, col=method)) +
   geom_point(size=2) +
   facet_wrap(~ variable) +
   theme_bw(base_size = 14) +
   xlab("") +
   ylab("count") +
-  ggtitle("Contamination") + theme(plot.title = element_text(hjust = 0.5))
+  ggtitle("Contamination") + theme(plot.title = element_text(hjust = 0.5)) +
+  scale_colour_manual(values=c("#E41A1C", "#377EB8", "#4DAF4A", "#984EA3", "#FF7F00"))
 # contam_gg
 
 frag_gg <- ggplot(plotdf[grepl("frag", plotdf$params),], aes(x=method, y=value, col=method)) +
@@ -460,7 +519,8 @@ frag_gg <- ggplot(plotdf[grepl("frag", plotdf$params),], aes(x=method, y=value, 
   ylab("count") +
   ggtitle("Fragmentation") + 
   theme(plot.title = element_text(hjust = 0.5),
-        legend.position = "none") 
+        legend.position = "none")+
+  scale_colour_manual(values=c("#E41A1C", "#377EB8", "#4DAF4A", "#984EA3", "#FF7F00"))
 # frag_gg
 
 contam_gg + frag_gg + patchwork::plot_layout(ncol = 1)
